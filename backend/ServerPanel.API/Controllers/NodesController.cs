@@ -46,6 +46,15 @@ public class NodesController : ControllerBase
         return Ok(node);
     }
 
+    [HttpGet("{id:guid}/cpu-cores")]
+    public async Task<IActionResult> GetCpuCores(Guid id, [FromServices] ServerPanel.API.Data.PanelDbContext db,
+        [FromServices] ServerPanel.API.Security.DockerEnrollment enrollment, CancellationToken token)
+    {
+        var node = await db.Nodes.FindAsync(new object[] { id }, token);
+        if (node is null) return NotFound();
+        return Ok(enrollment.RequireNode(node.DockerEndpoint).AllowedCpuCores.Where(core => core is >= 0 and <= 4095).Distinct().Order());
+    }
+
     /// <summary>
     /// Get the daemon token for a node (SuperAdmin only).
     /// </summary>
@@ -53,13 +62,8 @@ public class NodesController : ControllerBase
     [Authorize(Roles = "SuperAdmin")]
     [ProducesResponseType(200)]
     [ProducesResponseType(404)]
-    public async Task<IActionResult> GetNodeToken(Guid id)
-    {
-        var token = await _nodeService.GetNodeTokenAsync(id);
-        if (token == null) return NotFound();
-
-        return Ok(new { token });
-    }
+    public IActionResult GetNodeToken(Guid id) => StatusCode(410,
+        new { message = "Legacy daemon tokens are retired. Node trust is managed with operator-enrolled mTLS certificates." });
 
     /// <summary>
     /// Create a new node
@@ -69,20 +73,9 @@ public class NodesController : ControllerBase
     [ProducesResponseType(400)]
     public async Task<IActionResult> CreateNode([FromBody] CreateNodeRequest request)
     {
-        try
-        {
-            var node = await _nodeService.CreateNodeAsync(request);
-            if (node == null)
-            {
-                return BadRequest(new { message = "Node with this FQDN already exists" });
-            }
-
-            return CreatedAtAction(nameof(GetNode), new { id = node.Id }, node);
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new { message = $"Failed to create node: {ex.Message}" });
-        }
+        var node = await _nodeService.CreateNodeAsync(request);
+        if (node is null) return BadRequest(new { message = "Node already exists." });
+        return CreatedAtAction(nameof(GetNode), new { id = node.Id }, node);
     }
 
     /// <summary>
@@ -121,10 +114,12 @@ public class NodesController : ControllerBase
     /// </summary>
     [HttpGet("{id:guid}/allocations")]
     [ProducesResponseType(typeof(IEnumerable<AllocationDto>), 200)]
-    public async Task<IActionResult> GetAllocations(Guid id)
+    public async Task<IActionResult> GetAllocations(Guid id, int? page = null, int? pageSize = null)
     {
-        var allocations = await _nodeService.GetNodeAllocationsAsync(id);
-        return Ok(allocations);
+        var paging = ServerPanel.API.Common.Pagination.Resolve(page, pageSize);
+        var allocations = await _nodeService.GetNodeAllocationsAsync(id, paging.Page, paging.PageSize);
+        Response.ApplyPaginationHeaders(allocations);
+        return Ok(allocations.Items);
     }
 
     /// <summary>
@@ -196,13 +191,6 @@ public class NodesController : ControllerBase
     [HttpPost("{id:guid}/regenerate-token")]
     [ProducesResponseType(200)]
     [ProducesResponseType(404)]
-    public async Task<IActionResult> RegenerateToken(Guid id)
-    {
-        var success = await _nodeService.RegenerateNodeTokenAsync(id);
-        if (!success)
-        {
-            return NotFound(new { message = "Node not found" });
-        }
-        return Ok(new { message = "Token regenerated successfully" });
-    }
+    public IActionResult RegenerateToken(Guid id) => StatusCode(410,
+        new { message = "Rotate node certificates through operator enrollment." });
 }

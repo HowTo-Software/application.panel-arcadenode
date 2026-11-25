@@ -16,7 +16,7 @@
     "icon": "https://cdn.cloudflare.steamstatic.com/steam/apps/108600/header.jpg",
     
     "docker": {
-        "image": "arcadenode/project-zomboid:latest",
+        "image": "arcadenode/project-zomboid:secure",
         "build": {
             "dockerfile": "Dockerfile",
             "context": "."
@@ -65,19 +65,18 @@
     },
     
     "startup": {
-        "command": "./start-server.sh -servername \"{{SERVER_NAME_SAFE}}\" -adminpassword \"{{ADMIN_PASSWORD}}\" -ip 0.0.0.0 -port {{GAME_PORT}} -udpport {{STEAM_PORT}} -cachedir=\"{{ZOMBOID_DIR}}\"",
-        "working_directory": "/home/pzserver/server",
+        "command": "/usr/local/bin/arcadenode-entrypoint",
+        "working_directory": "/home/pzserver",
         "ready_pattern": "SERVER STARTED",
         "ready_timeout": 300,
         "environment": {
-            "HOME": "/home/pzserver",
-            "JAVA_OPTS": "-Xms{{SERVER_MEMORY}}m -Xmx{{SERVER_MEMORY}}m"
+            "HOME": "/home/pzserver"
         }
     },
     
     "process": {
         "stop_command": "quit",
-        "stop_timeout": 30,
+        "stop_timeout": 90,
         "restart_on_crash": true,
         "crash_patterns": [
             "FATAL ERROR",
@@ -191,10 +190,11 @@
             "type": "string",
             "default": "",
             "required": true,
+            "fresh_install_only": true,
             "user_viewable": false,
             "user_editable": true,
             "validation": {
-                "min_length": 4,
+                "min_length": 16,
                 "max_length": 64
             },
             "ui": {
@@ -291,6 +291,17 @@
             }
         },
         {
+            "id": "no_steam",
+            "name": "Non-Steam Mode",
+            "description": "Use the game's non-Steam mode for a private or migrated server. Connecting clients must use the same mode.",
+            "env_variable": "NO_STEAM",
+            "type": "boolean",
+            "default": false,
+            "user_viewable": true,
+            "user_editable": true,
+            "ui": { "component": "switch", "group": "advanced" }
+        },
+        {
             "id": "mod_ids",
             "name": "Mod IDs",
             "description": "Mod IDs to load (semicolon-separated)",
@@ -328,34 +339,47 @@
         {
             "id": "beta_branch",
             "name": "Beta Branch",
-            "description": "Steam beta branch to install (leave empty for stable Build 42)",
+            "description": "Steam branch to install. Leave empty to use the public branch.",
             "env_variable": "BETA_BRANCH",
             "type": "string",
             "default": "",
             "required": false,
             "user_viewable": true,
             "user_editable": true,
+            "validation": {
+                "max_length": 64,
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$"
+            },
             "ui": {
-                "component": "select",
-                "options": [
-                    {"value": "", "label": "Stable - Build 42 (Recommended)"},
-                    {"value": "unstable", "label": "Unstable (Testing Only)"},
-                    {"value": "legacy41_77", "label": "Legacy Build 41.77"},
-                    {"value": "legacy_42_12", "label": "Legacy Build 42.12"},
-                    {"value": "42.13.1", "label": "Build 42.13.1"}
-                ],
+                "component": "text",
+                "placeholder": "legacy41",
+                "group": "advanced"
+            }
+        },
+        {
+            "id": "auto_update",
+            "name": "Update on start",
+            "description": "Update the installed Steam branch on each start. Restored servers keep the copied build.",
+            "env_variable": "AUTO_UPDATE",
+            "type": "boolean",
+            "default": false,
+            "required": true,
+            "user_viewable": true,
+            "user_editable": true,
+            "ui": {
+                "component": "switch",
                 "group": "advanced"
             }
         },
         {
             "id": "max_ram",
             "name": "Max RAM (MB)",
-            "description": "Maximum memory allocation for the server",
+            "description": "Legacy standalone memory setting. The managed launcher follows the server reservation.",
             "env_variable": "MAX_RAM",
             "type": "integer",
             "default": 4096,
             "required": true,
-            "user_viewable": true,
+            "user_viewable": false,
             "user_editable": false,
             "validation": {
                 "min": 2048,

@@ -19,12 +19,24 @@ public class Backup
     public string? Checksum { get; set; }
 
     public bool IsSuccessful { get; set; } = false;
+    public bool IsQueued { get; set; }
+    public DateTime? NextAttemptAt { get; set; }
 
     public bool IsLocked { get; set; } = false;
+    public BackupDeletionStatus DeletionStatus { get; set; }
+    public Guid? DeletionNodeId { get; set; }
 
     public DateTime? CompletedAt { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public BackupRestoreStatus RestoreStatus { get; set; }
+    public Guid? RestoreNodeId { get; set; }
+    public DateTime? RestoreRequestedAt { get; set; }
+    public DateTime? RestoreCompletedAt { get; set; }
+    public int? RestoredFiles { get; set; }
+    public int? RestoredDirectories { get; set; }
+    public long? RestoredBytes { get; set; }
 
     // Foreign Keys
     [Required]
@@ -33,6 +45,9 @@ public class Backup
     [ForeignKey("ServerId")]
     public GameServer Server { get; set; } = null!;
 }
+
+public enum BackupRestoreStatus { None, Queued, Prepared, Failed }
+public enum BackupDeletionStatus { None, Queued, Failed }
 
 public class Schedule
 {
@@ -49,6 +64,11 @@ public class Schedule
     public bool IsActive { get; set; } = true;
 
     public bool IsProcessing { get; set; } = false;
+    public Guid? DelegatedUserId { get; set; }
+    public Guid? DelegatedMemberRevision { get; set; }
+    public DateTime? ProcessingStartedAt { get; set; }
+    public Guid? PendingBackupId { get; set; }
+    public Guid? PendingBackupTaskId { get; set; }
 
     public bool OnlyWhenOnline { get; set; } = false;
 

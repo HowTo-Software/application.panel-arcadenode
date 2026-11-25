@@ -49,6 +49,21 @@ export interface Server {
   ownerUsername: string
   nodeId: string
   nodeName: string
+  sharedPermissions?: string[] | null
+}
+
+export interface ServerMember {
+  userId: string
+  username: string
+  isActive: boolean
+  permissions: string[]
+  canEdit: boolean
+  canRemove: boolean
+}
+
+export interface ServerMemberships {
+  members: ServerMember[]
+  availablePermissions: string[]
 }
 
 export type ServerStatus =
@@ -59,16 +74,56 @@ export type ServerStatus =
   | 'Error'
   | 'Installing'
   | 'Suspended'
+  | 'Paused'
+
+export interface ServerBackup {
+  id: string
+  name: string
+  size: number
+  checksum: string | null
+  isSuccessful: boolean
+  isQueued: boolean
+  isLocked: boolean
+  deletionStatus: 'None' | 'Queued' | 'Failed'
+  canDelete: boolean
+  createdAt: string
+  completedAt: string | null
+  restoreAvailable: boolean
+  restoreStatus: 'None' | 'Queued' | 'Prepared' | 'Failed'
+  restoreNodeId: string | null
+  restoredFiles: number | null
+  restoredDirectories: number | null
+  restoredBytes: number | null
+  restoreCompletedAt: string | null
+}
+
+export interface ServerMigration {
+  id: string
+  name: string
+  identifier: string
+  nodeName: string
+  stage: 'AwaitingVerification' | 'Prepared' | 'Released'
+  volumeSha256: string | null
+  verifiedAt: string | null
+  releasedAt: string | null
+}
+
+export type MigrationAction = 'prepare-restored' | 'release-prepared'
 
 export interface ServerStats {
   serverId: string
   status: ServerStatus
   memoryUsage: number
   cpuUsage: number
-  diskUsage: number
+  diskUsage: number | null
+  blockIoBytes: number
   networkRxBytes: number
   networkTxBytes: number
   timestamp: string
+  startedAt?: string | null
+  exitCode?: number | null
+  oomKilled?: boolean | null
+  metricsAvailable?: boolean
 }
 
 export interface Node {
@@ -87,6 +142,10 @@ export interface Node {
   totalDisk: number
   allocatedMemory: number
   allocatedDisk: number
+  memoryCapacity?: number
+  diskCapacity?: number
+  cpuCapacityPercent?: number | null
+  allocatedCpuPercent?: number
   isOnline: boolean
   isMaintenanceMode: boolean
   serverCount: number
@@ -136,6 +195,23 @@ export interface EggVariable {
   rules: string | null
 }
 
+export interface NestSummary {
+  id: string
+  name: string
+  description: string
+  importedEggCount: number
+}
+
+export interface ImportedEgg {
+  sha256: string
+  cartridgeId: string | null
+  id: string
+  nestId: string
+  name: string
+  description: string
+  importedAt: string
+}
+
 export interface DashboardStats {
   totalUsers: number
   totalServers: number
@@ -183,6 +259,7 @@ export interface NodeConnectionTestResult {
   containerCount: number | null
   memoryTotal: number | null
   memoryAvailable: number | null
+  logicalCpuCount: number | null
 }
 
 // Game Template / Deployment Types
@@ -279,6 +356,7 @@ export interface CartridgeDetail {
   resources: {
     memory: CartridgeResourceLimit
     cpu: CartridgeResourceLimit
+    disk?: CartridgeResourceLimit
   }
   variables: CartridgeVariable[]
   variableGroups: CartridgeVariableGroup[] | null
@@ -307,6 +385,7 @@ export interface CartridgeResourceLimit {
   minimum: number
   recommended: number
   maximum: number
+  unit?: string | null
 }
 
 export interface CartridgeVariable {
@@ -323,6 +402,20 @@ export interface CartridgeVariable {
   ui: CartridgeVariableUI | null
 }
 
+export interface EggRuntimeVariable {
+  envVariable: string
+  name: string | null
+  description: string | null
+  defaultValue: string | null
+  userViewable: boolean
+  userEditable: boolean
+}
+
+export interface EggRuntime {
+  cartridgeId: string | null
+  variables: EggRuntimeVariable[] | null
+}
+
 export interface CartridgeVariableValidation {
   min: number | null
   max: number | null
@@ -332,7 +425,15 @@ export interface CartridgeVariableValidation {
 }
 
 export interface CartridgeVariableUI {
-  component: 'text' | 'textarea' | 'password' | 'number' | 'slider' | 'switch' | 'select'
+  hidden?: boolean
+  component:
+    | 'text'
+    | 'textarea'
+    | 'password'
+    | 'number'
+    | 'slider'
+    | 'switch'
+    | 'select'
   placeholder: string | null
   group: string | null
   help: string | null
@@ -347,6 +448,7 @@ export interface CartridgeVariableUI {
 }
 
 export interface CartridgeVariableGroup {
+  icon?: string
   id: string
   name: string
   description: string | null
@@ -365,13 +467,15 @@ export interface CartridgeConsoleCommand {
   name: string
   command: string
   description: string | null
-  parameters: {
-    name: string
-    type: string
-    required: boolean
-    default: unknown
-    options: string[] | null
-  }[] | null
+  parameters:
+    | {
+        name: string
+        type: string
+        required: boolean
+        default: unknown
+        options: string[] | null
+      }[]
+    | null
 }
 
 export interface CartridgeCategory {
@@ -386,8 +490,8 @@ export interface CreateCartridgeServerRequest {
   cartridgeId: string
   memoryLimit?: number
   cpuLimit?: number
+  cpuCores?: number[]
   diskLimit?: number
   port?: number
   variables: Record<string, unknown>
 }
-

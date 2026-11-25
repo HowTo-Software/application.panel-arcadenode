@@ -39,7 +39,7 @@ public class Node
 
     // Docker Configuration
     [Required]
-    public string DockerEndpoint { get; set; } = "unix:///var/run/docker.sock";
+    public string DockerEndpoint { get; set; } = "";
 
     public string? DaemonToken { get; set; }
 
@@ -47,6 +47,9 @@ public class Node
     public bool IsOnline { get; set; } = false;
 
     public bool IsMaintenanceMode { get; set; } = false;
+
+    [ConcurrencyCheck]
+    public Guid ReservationVersion { get; set; } = Guid.NewGuid();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -57,7 +60,7 @@ public class Node
     public ICollection<Allocation> Allocations { get; set; } = new List<Allocation>();
 
     // Calculated properties
-    public int AllocatedMemory => Servers.Sum(s => s.MemoryLimit);
-    public int AllocatedDisk => Servers.Sum(s => s.DiskLimit);
+    public long AllocatedMemory => Servers.Sum(s => (long)s.MemoryLimit);
+    public long AllocatedDisk => Servers.Sum(s => (long)s.DiskLimit);
     public int ServerCount => Servers.Count;
 }

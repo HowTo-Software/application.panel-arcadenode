@@ -17,7 +17,7 @@ namespace ServerPanel.API.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.0")
+                .HasAnnotation("ProductVersion", "10.0.15")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -158,6 +158,28 @@ namespace ServerPanel.API.Migrations
                     b.ToTable("AuditLogs");
                 });
 
+            modelBuilder.Entity("ServerPanel.API.Models.AuthSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "ExpiresAt");
+
+                    b.ToTable("AuthSessions");
+                });
+
             modelBuilder.Entity("ServerPanel.API.Models.Backup", b =>
                 {
                     b.Property<Guid>("Id")
@@ -173,10 +195,19 @@ namespace ServerPanel.API.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<Guid?>("DeletionNodeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("DeletionStatus")
+                        .HasColumnType("int");
+
                     b.Property<string>("IgnoredFiles")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("IsLocked")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsQueued")
                         .HasColumnType("bit");
 
                     b.Property<bool>("IsSuccessful")
@@ -186,6 +217,30 @@ namespace ServerPanel.API.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("NextAttemptAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("RestoreCompletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("RestoreNodeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("RestoreRequestedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("RestoreStatus")
+                        .HasColumnType("int");
+
+                    b.Property<long?>("RestoredBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("RestoredDirectories")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("RestoredFiles")
+                        .HasColumnType("int");
 
                     b.Property<Guid>("ServerId")
                         .HasColumnType("uniqueidentifier");
@@ -197,7 +252,52 @@ namespace ServerPanel.API.Migrations
 
                     b.HasIndex("ServerId");
 
+                    b.HasIndex("DeletionStatus", "CreatedAt");
+
+                    b.HasIndex("RestoreStatus", "RestoreRequestedAt");
+
+                    b.HasIndex("IsQueued", "NextAttemptAt", "CreatedAt");
+
                     b.ToTable("Backups");
+                });
+
+            modelBuilder.Entity("ServerPanel.API.Models.BackupDownloadGrant", b =>
+                {
+                    b.Property<string>("TokenHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<Guid>("BackupId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("MemberRevision")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SessionVersion")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
+
+                    b.HasKey("TokenHash");
+
+                    b.HasIndex("BackupId");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("BackupDownloadGrants");
                 });
 
             modelBuilder.Entity("ServerPanel.API.Models.Egg", b =>
@@ -223,8 +323,8 @@ namespace ServerPanel.API.Migrations
 
                     b.Property<string>("Description")
                         .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("DockerImage")
                         .IsRequired()
@@ -250,6 +350,13 @@ namespace ServerPanel.API.Migrations
                     b.Property<Guid>("NestId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("PterodactylManifest")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PterodactylSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<string>("StartupCommand")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -263,6 +370,10 @@ namespace ServerPanel.API.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("NestId");
+
+                    b.HasIndex("NestId", "PterodactylSha256")
+                        .IsUnique()
+                        .HasFilter("[PterodactylSha256] IS NOT NULL");
 
                     b.ToTable("Eggs");
 
@@ -281,6 +392,50 @@ namespace ServerPanel.API.Migrations
                         });
                 });
 
+            modelBuilder.Entity("ServerPanel.API.Models.FileDownloadGrant", b =>
+                {
+                    b.Property<string>("TokenHash")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("MemberRevision")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ServerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SessionVersion")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
+
+                    b.HasKey("TokenHash");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("ServerId");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("FileDownloadGrants");
+                });
+
             modelBuilder.Entity("ServerPanel.API.Models.GameServer", b =>
                 {
                     b.Property<Guid>("Id")
@@ -295,6 +450,10 @@ namespace ServerPanel.API.Migrations
 
                     b.Property<int>("CpuLimit")
                         .HasColumnType("int");
+
+                    b.Property<string>("CpuSet")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -335,6 +494,25 @@ namespace ServerPanel.API.Migrations
                     b.Property<int>("MemoryLimit")
                         .HasColumnType("int");
 
+                    b.Property<bool>("MigrationPending")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("MigrationReleasedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("MigrationReleasedById")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("MigrationSourceContainerId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<DateTime?>("MigrationSourceStoppedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("MigrationVolumeVerifiedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -349,6 +527,10 @@ namespace ServerPanel.API.Migrations
                     b.Property<int>("Port")
                         .HasColumnType("int");
 
+                    b.Property<string>("RestoredVolumeSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<string>("StartupCommand")
                         .HasColumnType("nvarchar(max)");
 
@@ -362,9 +544,10 @@ namespace ServerPanel.API.Migrations
                     b.HasIndex("Identifier")
                         .IsUnique();
 
-                    b.HasIndex("NodeId");
-
                     b.HasIndex("OwnerId");
+
+                    b.HasIndex("NodeId", "Port")
+                        .IsUnique();
 
                     b.ToTable("Servers");
                 });
@@ -379,6 +562,10 @@ namespace ServerPanel.API.Migrations
                         .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)");
+
+                    b.Property<Guid>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -479,7 +666,7 @@ namespace ServerPanel.API.Migrations
 
                     b.Property<string>("DockerEndpoint")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("Fqdn")
                         .IsRequired()
@@ -503,6 +690,10 @@ namespace ServerPanel.API.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<Guid>("ReservationVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int>("SftpPort")
                         .HasColumnType("int");
 
@@ -516,6 +707,9 @@ namespace ServerPanel.API.Migrations
                         .HasColumnType("bit");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DockerEndpoint")
+                        .IsUnique();
 
                     b.HasIndex("Fqdn")
                         .IsUnique();
@@ -535,6 +729,12 @@ namespace ServerPanel.API.Migrations
                     b.Property<string>("CronExpression")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid?>("DelegatedMemberRevision")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("DelegatedUserId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
@@ -556,12 +756,25 @@ namespace ServerPanel.API.Migrations
                     b.Property<bool>("OnlyWhenOnline")
                         .HasColumnType("bit");
 
+                    b.Property<Guid?>("PendingBackupId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("PendingBackupTaskId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ProcessingStartedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<Guid>("ServerId")
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
                     b.HasIndex("ServerId");
+
+                    b.HasIndex("IsProcessing", "PendingBackupId");
+
+                    b.HasIndex("IsActive", "IsProcessing", "NextRunAt");
 
                     b.ToTable("Schedules");
                 });
@@ -597,6 +810,27 @@ namespace ServerPanel.API.Migrations
                     b.ToTable("ScheduleTasks");
                 });
 
+            modelBuilder.Entity("ServerPanel.API.Models.ServerMember", b =>
+                {
+                    b.Property<Guid>("ServerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Permissions")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("Revision")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("ServerId", "UserId");
+
+                    b.HasIndex("UserId", "ServerId");
+
+                    b.ToTable("ServerMembers");
+                });
+
             modelBuilder.Entity("ServerPanel.API.Models.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -630,6 +864,9 @@ namespace ServerPanel.API.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
+                    b.Property<long?>("LastTotpStep")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime?>("LockoutEnd")
                         .HasColumnType("datetime2");
 
@@ -637,8 +874,16 @@ namespace ServerPanel.API.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("ProtectedTotpSecret")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<int>("Role")
                         .HasColumnType("int");
+
+                    b.Property<string>("SecurityStamp")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
 
                     b.Property<string>("Username")
                         .IsRequired()
@@ -685,6 +930,17 @@ namespace ServerPanel.API.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("ServerPanel.API.Models.AuthSession", b =>
+                {
+                    b.HasOne("ServerPanel.API.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("ServerPanel.API.Models.Backup", b =>
                 {
                     b.HasOne("ServerPanel.API.Models.GameServer", "Server")
@@ -696,6 +952,25 @@ namespace ServerPanel.API.Migrations
                     b.Navigation("Server");
                 });
 
+            modelBuilder.Entity("ServerPanel.API.Models.BackupDownloadGrant", b =>
+                {
+                    b.HasOne("ServerPanel.API.Models.Backup", "Backup")
+                        .WithMany()
+                        .HasForeignKey("BackupId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ServerPanel.API.Models.AuthSession", "Session")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Backup");
+
+                    b.Navigation("Session");
+                });
+
             modelBuilder.Entity("ServerPanel.API.Models.Egg", b =>
                 {
                     b.HasOne("ServerPanel.API.Models.Nest", "Nest")
@@ -705,6 +980,25 @@ namespace ServerPanel.API.Migrations
                         .IsRequired();
 
                     b.Navigation("Nest");
+                });
+
+            modelBuilder.Entity("ServerPanel.API.Models.FileDownloadGrant", b =>
+                {
+                    b.HasOne("ServerPanel.API.Models.GameServer", "Server")
+                        .WithMany()
+                        .HasForeignKey("ServerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ServerPanel.API.Models.AuthSession", "Session")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Server");
+
+                    b.Navigation("Session");
                 });
 
             modelBuilder.Entity("ServerPanel.API.Models.GameServer", b =>
@@ -764,6 +1058,23 @@ namespace ServerPanel.API.Migrations
                         .IsRequired();
 
                     b.Navigation("Schedule");
+                });
+
+            modelBuilder.Entity("ServerPanel.API.Models.ServerMember", b =>
+                {
+                    b.HasOne("ServerPanel.API.Models.GameServer", null)
+                        .WithMany()
+                        .HasForeignKey("ServerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ServerPanel.API.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("ServerPanel.API.Models.Egg", b =>

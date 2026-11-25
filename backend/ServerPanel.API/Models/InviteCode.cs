@@ -12,7 +12,7 @@ public class InviteCode
     public string Code { get; set; } = string.Empty;
 
     /// <summary>
-    /// Maximum number of times this code can be used. 0 = unlimited.
+    /// Maximum number of uses, from 1 to 100.
     /// </summary>
     public int MaxUses { get; set; } = 1;
 
@@ -21,8 +21,11 @@ public class InviteCode
     /// </summary>
     public int TimesUsed { get; set; } = 0;
 
+    [ConcurrencyCheck]
+    public Guid ConcurrencyVersion { get; set; } = Guid.NewGuid();
+
     /// <summary>
-    /// Optional expiration date. Null = never expires.
+    /// Legacy nullable column; new invites require an expiration.
     /// </summary>
     public DateTime? ExpiresAt { get; set; }
 
@@ -41,6 +44,6 @@ public class InviteCode
     /// </summary>
     public bool IsValid =>
         !IsRevoked
-        && (MaxUses == 0 || TimesUsed < MaxUses)
-        && (ExpiresAt == null || ExpiresAt > DateTime.UtcNow);
+        && MaxUses is >= 1 and <= 100 && TimesUsed >= 0 && TimesUsed < MaxUses
+        && ExpiresAt.HasValue && ExpiresAt > DateTime.UtcNow;
 }

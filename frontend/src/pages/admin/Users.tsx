@@ -4,17 +4,26 @@ import toast from 'react-hot-toast'
 import { adminService } from '@/services/api'
 import { getErrorMessage } from '@/lib/errorHandler'
 import type { InviteCode } from '@/types'
-import { UsersIcon, TrashIcon, TicketIcon, ClipboardDocumentIcon, PlusIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
+import {
+  UsersIcon,
+  TrashIcon,
+  TicketIcon,
+  ClipboardDocumentIcon,
+  PlusIcon,
+  ArrowPathIcon,
+} from '@heroicons/react/24/outline'
 import clsx from 'clsx'
 import { formatDistanceToNow, format } from 'date-fns'
 import { usePageTitle } from '@/lib/usePageTitle'
 
 export default function Users() {
-  usePageTitle('Users')
+  usePageTitle('Usuários e convites')
   const queryClient = useQueryClient()
   const [inviteMaxUses, setInviteMaxUses] = useState(1)
   const [inviteExpiry, setInviteExpiry] = useState('')
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(
+    null
+  )
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['users'],
@@ -30,10 +39,10 @@ export default function Users() {
     mutationFn: adminService.deleteUser,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
-      toast.success('User deleted successfully')
+      toast.success('Usuário excluído')
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, 'Failed to delete user'))
+      toast.error(getErrorMessage(error, 'Não foi possível excluir o usuário'))
     },
   })
 
@@ -50,7 +59,7 @@ export default function Users() {
       setInviteExpiry('')
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, 'Failed to create invite code'))
+      toast.error(getErrorMessage(error, 'Não foi possível criar o convite'))
     },
   })
 
@@ -58,16 +67,16 @@ export default function Users() {
     mutationFn: adminService.revokeInviteCode,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inviteCodes'] })
-      toast.success('Invite code revoked')
+      toast.success('Convite revogado')
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, 'Failed to revoke invite code'))
+      toast.error(getErrorMessage(error, 'Não foi possível revogar o convite'))
     },
   })
 
   const copyToClipboard = (code: string) => {
     navigator.clipboard.writeText(code)
-    toast.success('Invite code copied to clipboard')
+    toast.success('Código copiado')
   }
 
   const getRoleBadgeColor = (role: string) => {
@@ -93,21 +102,39 @@ export default function Users() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Users</h1>
-        <p className="text-gray-400">{users?.length ?? 0} total users</p>
+      <div className="page-heading">
+        <div>
+          <h1>Usuários e convites</h1>
+          <p>Controle o acesso ao seu workspace e convide sua equipe.</p>
+        </div>
+        <span className="feature-label">
+          {users?.length ?? 0} usuários cadastrados
+        </span>
       </div>
 
       {users && users.length > 0 ? (
-        <div className="bg-panel-card border border-panel-border rounded-xl overflow-hidden">
-          <table className="w-full">
+        <div className="bg-panel-card border border-panel-border rounded-xl overflow-x-auto">
+          <table
+            className="w-full min-w-[650px]"
+            aria-label="Usuários cadastrados"
+          >
             <thead>
               <tr className="border-b border-panel-border">
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-400">User</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-400">Role</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-400">Status</th>
-                <th className="text-left px-6 py-4 text-sm font-medium text-gray-400">Last Login</th>
-                <th className="text-right px-6 py-4 text-sm font-medium text-gray-400">Actions</th>
+                <th className="text-left px-6 py-4 text-sm font-medium text-gray-400">
+                  Usuário
+                </th>
+                <th className="text-left px-6 py-4 text-sm font-medium text-gray-400">
+                  Permissão
+                </th>
+                <th className="text-left px-6 py-4 text-sm font-medium text-gray-400">
+                  Status
+                </th>
+                <th className="text-left px-6 py-4 text-sm font-medium text-gray-400">
+                  Último acesso
+                </th>
+                <th className="text-right px-6 py-4 text-sm font-medium text-gray-400">
+                  Ações
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-panel-border">
@@ -142,20 +169,26 @@ export default function Users() {
                           user.isActive ? 'bg-green-400' : 'bg-red-400'
                         )}
                       />
-                      {user.isActive ? 'Active' : 'Inactive'}
+                      {user.isActive ? 'Ativo' : 'Inativo'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-400">
                     {user.lastLoginAt
-                      ? formatDistanceToNow(new Date(user.lastLoginAt), { addSuffix: true })
-                      : 'Never'}
+                      ? formatDistanceToNow(new Date(user.lastLoginAt), {
+                          addSuffix: true,
+                        })
+                      : 'Nunca'}
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button
                       onClick={() => setShowDeleteConfirm(user.id)}
                       disabled={user.role === 'SuperAdmin'}
                       className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={user.role === 'SuperAdmin' ? 'Cannot delete super admin' : 'Delete user'}
+                      title={
+                        user.role === 'SuperAdmin'
+                          ? 'Não é possível excluir um superadministrador'
+                          : 'Excluir usuário'
+                      }
                     >
                       <TrashIcon className="h-5 w-5" />
                     </button>
@@ -168,8 +201,12 @@ export default function Users() {
       ) : (
         <div className="bg-panel-card border border-panel-border rounded-xl p-12 text-center">
           <UsersIcon className="h-16 w-16 text-gray-600 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-white mb-2">No users found</h3>
-          <p className="text-gray-400">Users will appear here once they register</p>
+          <h3 className="text-lg font-medium text-white mb-2">
+            Nenhum usuário encontrado
+          </h3>
+          <p className="text-gray-400">
+            Os usuários aparecerão aqui após o cadastro por convite.
+          </p>
         </div>
       )}
 
@@ -177,16 +214,19 @@ export default function Users() {
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-sm">
           <div className="bg-panel-card border border-panel-border rounded-xl p-6 max-w-md mx-4 shadow-2xl">
-            <h3 className="text-xl font-semibold text-white mb-2">Delete User</h3>
+            <h3 className="text-xl font-semibold text-white mb-2">
+              Excluir usuário
+            </h3>
             <p className="text-gray-400 mb-4">
-              Are you sure you want to delete this user? This action cannot be undone and all associated data will be permanently removed.
+              Deseja excluir este usuário? Esta ação é permanente e não pode ser
+              desfeita.
             </p>
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setShowDeleteConfirm(null)}
                 className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={() => {
@@ -199,12 +239,12 @@ export default function Users() {
                 {deleteMutation.isPending ? (
                   <>
                     <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                    Deleting...
+                    Excluindo...
                   </>
                 ) : (
                   <>
                     <TrashIcon className="h-4 w-4" />
-                    Delete User
+                    Excluir usuário
                   </>
                 )}
               </button>
@@ -218,10 +258,10 @@ export default function Users() {
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <TicketIcon className="h-6 w-6 text-primary-400" />
-            Invite Codes
+            Convites de acesso
           </h2>
           <p className="text-gray-400">
-            {inviteCodes?.filter((i) => i.isValid).length ?? 0} active codes
+            {inviteCodes?.filter((i) => i.isValid).length ?? 0} convites ativos
           </p>
         </div>
 
@@ -229,22 +269,29 @@ export default function Users() {
         <div className="bg-panel-card border border-panel-border rounded-xl p-4 mb-4">
           <div className="flex items-end gap-4 flex-wrap">
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Max Uses</label>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Limite de usos
+              </label>
               <input
                 type="number"
-                min={0}
+                min={1}
+                max={100}
+                aria-label="Limite de usos do convite"
                 value={inviteMaxUses}
-                onChange={(e) => setInviteMaxUses(parseInt(e.target.value) || 0)}
+                onChange={(e) =>
+                  setInviteMaxUses(parseInt(e.target.value) || 0)
+                }
                 className="w-24 px-3 py-2 bg-panel-dark border border-panel-border rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
-              <p className="text-xs text-gray-500 mt-0.5">0 = unlimited</p>
+              <p className="text-xs text-gray-500 mt-0.5">De 1 a 100 usos</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">
-                Expires (optional)
+                Validade (opcional)
               </label>
               <input
                 type="datetime-local"
+                aria-label="Validade do convite"
                 value={inviteExpiry}
                 onChange={(e) => setInviteExpiry(e.target.value)}
                 className="px-3 py-2 bg-panel-dark border border-panel-border rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
@@ -256,7 +303,7 @@ export default function Users() {
               className="flex items-center gap-1.5 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-primary-800 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
             >
               <PlusIcon className="h-4 w-4" />
-              {createInviteMutation.isPending ? 'Creating...' : 'Generate Code'}
+              {createInviteMutation.isPending ? 'Criando...' : 'Gerar convite'}
             </button>
           </div>
         </div>
@@ -267,19 +314,30 @@ export default function Users() {
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-500" />
           </div>
         ) : inviteCodes && inviteCodes.length > 0 ? (
-          <div className="bg-panel-card border border-panel-border rounded-xl overflow-hidden">
-            <table className="w-full">
+          <div className="bg-panel-card border border-panel-border rounded-xl overflow-x-auto">
+            <table
+              className="w-full min-w-[650px]"
+              aria-label="Convites de acesso"
+            >
               <thead>
                 <tr className="border-b border-panel-border">
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">Code</th>
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">Usage</th>
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">Status</th>
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">Expires</th>
                   <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">
-                    Created
+                    Código
+                  </th>
+                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">
+                    Utilizações
+                  </th>
+                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">
+                    Status
+                  </th>
+                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">
+                    Validade
+                  </th>
+                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-400">
+                    Criado em
                   </th>
                   <th className="text-right px-6 py-3 text-sm font-medium text-gray-400">
-                    Actions
+                    Ações
                   </th>
                 </tr>
               </thead>
@@ -292,7 +350,8 @@ export default function Users() {
                       </code>
                     </td>
                     <td className="px-6 py-3 text-sm text-gray-400">
-                      {invite.timesUsed} / {invite.maxUses === 0 ? '∞' : invite.maxUses}
+                      {invite.timesUsed} /{' '}
+                      {invite.maxUses === 0 ? '∞' : invite.maxUses}
                     </td>
                     <td className="px-6 py-3">
                       <span
@@ -315,18 +374,31 @@ export default function Users() {
                                 : 'bg-gray-400'
                           )}
                         />
-                        {invite.isRevoked ? 'Revoked' : invite.isValid ? 'Active' : 'Expired'}
+                        {invite.isRevoked
+                          ? 'Revogado'
+                          : invite.isValid
+                            ? 'Ativo'
+                            : 'Expirado'}
                       </span>
                     </td>
                     <td className="px-6 py-3 text-sm text-gray-400">
                       {invite.expiresAt
-                        ? format(new Date(invite.expiresAt), 'MMM d, yyyy HH:mm')
-                        : 'Never'}
+                        ? format(
+                            new Date(invite.expiresAt),
+                            'MMM d, yyyy HH:mm'
+                          )
+                        : 'Nunca'}
                     </td>
                     <td className="px-6 py-3 text-sm text-gray-400">
                       <div>
-                        <p>{formatDistanceToNow(new Date(invite.createdAt), { addSuffix: true })}</p>
-                        <p className="text-xs text-gray-500">by {invite.createdByUsername}</p>
+                        <p>
+                          {formatDistanceToNow(new Date(invite.createdAt), {
+                            addSuffix: true,
+                          })}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          por {invite.createdByUsername}
+                        </p>
                       </div>
                     </td>
                     <td className="px-6 py-3 text-right">
@@ -334,16 +406,18 @@ export default function Users() {
                         <button
                           onClick={() => copyToClipboard(invite.code)}
                           className="p-1.5 text-gray-400 hover:text-white hover:bg-panel-dark rounded-lg transition-colors"
-                          title="Copy code"
+                          title="Copiar c?digo"
                         >
                           <ClipboardDocumentIcon className="h-4 w-4" />
                         </button>
                         {invite.isValid && (
                           <button
-                            onClick={() => revokeInviteMutation.mutate(invite.id)}
+                            onClick={() =>
+                              revokeInviteMutation.mutate(invite.id)
+                            }
                             disabled={revokeInviteMutation.isPending}
                             className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-                            title="Revoke invite code"
+                            title="Revogar convite"
                           >
                             <TrashIcon className="h-4 w-4" />
                           </button>
@@ -358,9 +432,11 @@ export default function Users() {
         ) : (
           <div className="bg-panel-card border border-panel-border rounded-xl p-8 text-center">
             <TicketIcon className="h-12 w-12 text-gray-600 mx-auto mb-3" />
-            <h3 className="text-lg font-medium text-white mb-1">No invite codes</h3>
+            <h3 className="text-lg font-medium text-white mb-1">
+              Nenhum convite criado
+            </h3>
             <p className="text-gray-400 text-sm">
-              Generate invite codes above to allow new users to register.
+              Gere um convite acima para permitir novos cadastros.
             </p>
           </div>
         )}

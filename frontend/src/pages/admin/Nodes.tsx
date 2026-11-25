@@ -5,17 +5,28 @@ import toast from 'react-hot-toast'
 import { nodeService } from '@/services/api'
 import { getErrorMessage } from '@/lib/errorHandler'
 import type { CreateNodeRequest, NodeConnectionTestResult } from '@/types'
-import { PlusIcon, TrashIcon, CubeIcon, SignalIcon, ArrowPathIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
+import {
+  PlusIcon,
+  TrashIcon,
+  CubeIcon,
+  SignalIcon,
+  ArrowPathIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+} from '@heroicons/react/24/outline'
 import clsx from 'clsx'
 import { usePageTitle } from '@/lib/usePageTitle'
 
 export default function Nodes() {
-  usePageTitle('Nodes')
+  usePageTitle('Nós de hospedagem')
   const queryClient = useQueryClient()
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(
+    null
+  )
   const [testingConnection, setTestingConnection] = useState(false)
-  const [connectionResult, setConnectionResult] = useState<NodeConnectionTestResult | null>(null)
+  const [connectionResult, setConnectionResult] =
+    useState<NodeConnectionTestResult | null>(null)
 
   const { data: nodes, isLoading } = useQuery({
     queryKey: ['nodes'],
@@ -29,11 +40,10 @@ export default function Nodes() {
       setShowCreateModal(false)
       reset()
       setConnectionResult(null)
-      toast.success('Node created successfully')
+      toast.success('Nó cadastrado')
     },
     onError: (error: unknown) => {
-      console.error('Node creation error:', error)
-      toast.error(getErrorMessage(error, 'Failed to create node'))
+      toast.error(getErrorMessage(error, 'Não foi possível cadastrar o nó'))
     },
   })
 
@@ -41,10 +51,10 @@ export default function Nodes() {
     mutationFn: nodeService.delete,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['nodes'] })
-      toast.success('Node deleted successfully')
+      toast.success('Nó excluído')
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, 'Failed to delete node'))
+      toast.error(getErrorMessage(error, 'Não foi possível excluir o nó'))
     },
   })
 
@@ -59,7 +69,7 @@ export default function Nodes() {
       }
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, 'Failed to test connection'))
+      toast.error(getErrorMessage(error, 'Não foi possível testar a conexão'))
     },
   })
 
@@ -70,21 +80,22 @@ export default function Nodes() {
       const result = await nodeService.testConnection(dockerEndpoint)
       setConnectionResult(result)
       if (result.success) {
-        toast.success('Connection successful!')
+        toast.success('Conexão estabelecida')
       } else {
         toast.error(result.message)
       }
     } catch (error) {
       setConnectionResult({
         success: false,
-        message: getErrorMessage(error, 'Failed to test connection'),
+        message: getErrorMessage(error, 'Não foi possível testar a conexão'),
         dockerVersion: null,
         operatingSystem: null,
         containerCount: null,
         memoryTotal: null,
         memoryAvailable: null,
+        logicalCpuCount: null,
       })
-      toast.error('Failed to test connection')
+      toast.error('Não foi possível testar a conexão')
     } finally {
       setTestingConnection(false)
     }
@@ -101,7 +112,7 @@ export default function Nodes() {
       sftpPort: 2022,
       totalMemory: 0,
       totalDisk: 0,
-      dockerEndpoint: 'tcp://arcadenode_node:2375',
+      dockerEndpoint: '',
     },
   })
 
@@ -111,16 +122,24 @@ export default function Nodes() {
       name: data.name,
       fqdn: data.fqdn,
       description: data.description || undefined,
-      daemonPort: isNaN(data.daemonPort as number) ? 8080 : (data.daemonPort || 8080),
-      sftpPort: isNaN(data.sftpPort as number) ? 2022 : (data.sftpPort || 2022),
-      totalMemory: isNaN(data.totalMemory as number) ? 0 : (data.totalMemory || 0),
-      totalDisk: isNaN(data.totalDisk as number) ? 0 : (data.totalDisk || 0),
-      memoryOverallocate: isNaN(data.memoryOverallocate as number) ? 0 : (data.memoryOverallocate || 0),
-      diskOverallocate: isNaN(data.diskOverallocate as number) ? 0 : (data.diskOverallocate || 0),
-      dockerEndpoint: data.dockerEndpoint || 'tcp://arcadenode_node:2375',
+      daemonPort: isNaN(data.daemonPort as number)
+        ? 8080
+        : data.daemonPort || 8080,
+      sftpPort: isNaN(data.sftpPort as number) ? 2022 : data.sftpPort || 2022,
+      totalMemory: isNaN(data.totalMemory as number)
+        ? 0
+        : data.totalMemory || 0,
+      totalDisk: isNaN(data.totalDisk as number) ? 0 : data.totalDisk || 0,
+      memoryOverallocate: isNaN(data.memoryOverallocate as number)
+        ? 0
+        : data.memoryOverallocate || 0,
+      diskOverallocate: isNaN(data.diskOverallocate as number)
+        ? 0
+        : data.diskOverallocate || 0,
+      dockerEndpoint: data.dockerEndpoint,
       useSsl: data.useSsl || false,
     }
-    console.log('Submitting node data:', cleanedData)
+
     createMutation.mutate(cleanedData)
   }
 
@@ -134,14 +153,17 @@ export default function Nodes() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-white">Nodes</h1>
+      <div className="page-heading">
+        <div>
+          <h1>Nós de hospedagem</h1>
+          <p>Gerencie a infraestrutura que mantém seus servidores online.</p>
+        </div>
         <button
           onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg transition-colors"
+          className="button button-primary"
         >
           <PlusIcon className="h-5 w-5" />
-          Create Node
+          Adicionar nó
         </button>
       </div>
 
@@ -170,15 +192,24 @@ export default function Nodes() {
                     onClick={() => testNodeMutation.mutate(node.id)}
                     disabled={testNodeMutation.isPending}
                     className="p-2 text-gray-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors disabled:opacity-50"
-                    title="Test connection"
+                    title="Testar conexão"
                   >
-                    <SignalIcon className={clsx('h-5 w-5', testNodeMutation.isPending && 'animate-pulse')} />
+                    <SignalIcon
+                      className={clsx(
+                        'h-5 w-5',
+                        testNodeMutation.isPending && 'animate-pulse'
+                      )}
+                    />
                   </button>
                   <button
                     onClick={() => setShowDeleteConfirm(node.id)}
                     disabled={node.serverCount > 0}
                     className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={node.serverCount > 0 ? 'Cannot delete node with servers' : 'Delete node'}
+                    title={
+                      node.serverCount > 0
+                        ? 'Cannot delete node with servers'
+                        : 'Delete node'
+                    }
                   >
                     <TrashIcon className="h-5 w-5" />
                   </button>
@@ -188,28 +219,32 @@ export default function Nodes() {
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-400">Status</span>
-                  <span className={node.isOnline ? 'text-green-400' : 'text-red-400'}>
+                  <span
+                    className={
+                      node.isOnline ? 'text-green-400' : 'text-red-400'
+                    }
+                  >
                     {node.isOnline ? 'Online' : 'Offline'}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Servers</span>
+                  <span className="text-gray-400">Servidores</span>
                   <span className="text-gray-300">{node.serverCount}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Memory</span>
+                  <span className="text-gray-400">Memória</span>
                   <span className="text-gray-300">
                     {node.allocatedMemory} / {node.totalMemory || '∞'} MB
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Disk</span>
+                  <span className="text-gray-400">Disco</span>
                   <span className="text-gray-300">
                     {node.allocatedDisk} / {node.totalDisk || '∞'} MB
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Daemon Port</span>
+                  <span className="text-gray-400">Porta do agente</span>
                   <span className="text-gray-300">{node.daemonPort}</span>
                 </div>
               </div>
@@ -223,7 +258,9 @@ export default function Nodes() {
       ) : (
         <div className="bg-panel-card border border-panel-border rounded-xl p-12 text-center">
           <CubeIcon className="h-16 w-16 text-gray-600 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-white mb-2">No nodes found</h3>
+          <h3 className="text-lg font-medium text-white mb-2">
+            Nenhum nó cadastrado
+          </h3>
           <p className="text-gray-400 mb-6">
             Create your first node to start deploying servers
           </p>
@@ -232,7 +269,7 @@ export default function Nodes() {
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg transition-colors"
           >
             <PlusIcon className="h-5 w-5" />
-            Create Node
+            Adicionar nó
           </button>
         </div>
       )}
@@ -241,16 +278,18 @@ export default function Nodes() {
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 backdrop-blur-sm">
           <div className="bg-panel-card border border-panel-border rounded-xl p-6 max-w-md mx-4 shadow-2xl">
-            <h3 className="text-xl font-semibold text-white mb-2">Delete Node</h3>
+            <h3 className="text-xl font-semibold text-white mb-2">
+              Excluir nó
+            </h3>
             <p className="text-gray-400 mb-4">
-              Are you sure you want to delete this node? This action cannot be undone.
+              Deseja excluir este nó? Esta ação não pode ser desfeita.
             </p>
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setShowDeleteConfirm(null)}
                 className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors"
               >
-                Cancel
+                Cancelar
               </button>
               <button
                 onClick={() => {
@@ -263,12 +302,12 @@ export default function Nodes() {
                 {deleteMutation.isPending ? (
                   <>
                     <ArrowPathIcon className="h-4 w-4 animate-spin" />
-                    Deleting...
+                    Excluindo...
                   </>
                 ) : (
                   <>
                     <TrashIcon className="h-4 w-4" />
-                    Delete Node
+                    Excluir nó
                   </>
                 )}
               </button>
@@ -281,38 +320,48 @@ export default function Nodes() {
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-panel-card border border-panel-border rounded-xl p-6 w-full max-w-lg mx-4">
-            <h2 className="text-xl font-semibold text-white mb-4">Create Node</h2>
+            <h2 className="text-xl font-semibold text-white mb-4">
+              Adicionar nó
+            </h2>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Name</label>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Nome
+                </label>
                 <input
                   type="text"
-                  {...register('name', { required: 'Name is required' })}
+                  {...register('name', { required: 'Informe o nome' })}
                   className="w-full px-4 py-2 bg-panel-dark border border-panel-border rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  placeholder="My Node"
+                  placeholder="Meu nó"
                 />
                 {errors.name && (
-                  <p className="mt-1 text-sm text-red-400">{errors.name.message}</p>
+                  <p className="mt-1 text-sm text-red-400">
+                    {errors.name.message}
+                  </p>
                 )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">FQDN</label>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  FQDN
+                </label>
                 <input
                   type="text"
-                  {...register('fqdn', { required: 'FQDN is required' })}
+                  {...register('fqdn', { required: 'Informe o domínio ou IP' })}
                   className="w-full px-4 py-2 bg-panel-dark border border-panel-border rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                   placeholder="node.example.com"
                 />
                 {errors.fqdn && (
-                  <p className="mt-1 text-sm text-red-400">{errors.fqdn.message}</p>
+                  <p className="mt-1 text-sm text-red-400">
+                    {errors.fqdn.message}
+                  </p>
                 )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
-                    Daemon Port
+                    Porta do agente
                   </label>
                   <input
                     type="number"
@@ -321,7 +370,9 @@ export default function Nodes() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">SFTP Port</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    Porta SFTP
+                  </label>
                   <input
                     type="number"
                     {...register('sftpPort', { valueAsNumber: true })}
@@ -333,46 +384,51 @@ export default function Nodes() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
-                    Total Memory (MB)
+                    Memória total (MB)
                   </label>
                   <input
                     type="number"
                     {...register('totalMemory', { valueAsNumber: true })}
                     className="w-full px-4 py-2 bg-panel-dark border border-panel-border rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    placeholder="0 = unlimited"
+                    placeholder="0 = ilimitado"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-1">
-                    Total Disk (MB)
+                    Disco total (MB)
                   </label>
                   <input
                     type="number"
                     {...register('totalDisk', { valueAsNumber: true })}
                     className="w-full px-4 py-2 bg-panel-dark border border-panel-border rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    placeholder="0 = unlimited"
+                    placeholder="0 = ilimitado"
                   />
                 </div>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Docker Endpoint
+                  Endereço do Docker
                 </label>
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    {...register('dockerEndpoint')}
+                    {...register('dockerEndpoint', { required: true, pattern: /^https:\/\// })}
+                    placeholder="https://node.example.com:2376"
                     className="flex-1 px-4 py-2 bg-panel-dark border border-panel-border rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
                   />
                   <button
                     type="button"
                     onClick={() => {
-                      const endpoint = (document.querySelector('input[name="dockerEndpoint"]') as HTMLInputElement)?.value
+                      const endpoint = (
+                        document.querySelector(
+                          'input[name="dockerEndpoint"]'
+                        ) as HTMLInputElement
+                      )?.value
                       if (endpoint) {
                         handleTestConnection(endpoint)
                       } else {
-                        toast.error('Please enter a Docker endpoint first')
+                        toast.error('Informe o endereço do Docker primeiro')
                       }
                     }}
                     disabled={testingConnection}
@@ -386,40 +442,80 @@ export default function Nodes() {
                     Test
                   </button>
                 </div>
-                <p className="mt-1 text-xs text-gray-500">e.g., tcp://192.168.1.100:2375</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  Use o endereço HTTPS de um node previamente cadastrado pelo operador.
+                </p>
               </div>
 
               {/* Connection Test Result */}
               {connectionResult && (
-                <div className={clsx(
-                  'p-4 rounded-lg border',
-                  connectionResult.success
-                    ? 'bg-green-500/10 border-green-500/30'
-                    : 'bg-red-500/10 border-red-500/30'
-                )}>
+                <div
+                  className={clsx(
+                    'p-4 rounded-lg border',
+                    connectionResult.success
+                      ? 'bg-green-500/10 border-green-500/30'
+                      : 'bg-red-500/10 border-red-500/30'
+                  )}
+                >
                   <div className="flex items-center gap-2 mb-2">
                     {connectionResult.success ? (
                       <CheckCircleIcon className="h-5 w-5 text-green-400" />
                     ) : (
                       <XCircleIcon className="h-5 w-5 text-red-400" />
                     )}
-                    <span className={connectionResult.success ? 'text-green-400' : 'text-red-400'}>
+                    <span
+                      className={
+                        connectionResult.success
+                          ? 'text-green-400'
+                          : 'text-red-400'
+                      }
+                    >
                       {connectionResult.message}
                     </span>
                   </div>
                   {connectionResult.success && (
                     <div className="grid grid-cols-2 gap-2 text-sm text-gray-400">
-                      <div>Docker: <span className="text-gray-300">{connectionResult.dockerVersion}</span></div>
-                      <div>OS: <span className="text-gray-300">{connectionResult.operatingSystem}</span></div>
-                      <div>Containers: <span className="text-gray-300">{connectionResult.containerCount}</span></div>
-                      <div>Memory: <span className="text-gray-300">{connectionResult.memoryTotal ? Math.round(connectionResult.memoryTotal / 1024 / 1024 / 1024) + ' GB' : 'N/A'}</span></div>
+                      <div>
+                        Docker:{' '}
+                        <span className="text-gray-300">
+                          {connectionResult.dockerVersion}
+                        </span>
+                      </div>
+                      <div>
+                        OS:{' '}
+                        <span className="text-gray-300">
+                          {connectionResult.operatingSystem}
+                        </span>
+                      </div>
+                      <div>
+                        Containers:{' '}
+                        <span className="text-gray-300">
+                          {connectionResult.containerCount}
+                        </span>
+                      </div>
+                      <div>
+                        Memória total{' '}
+                        <span className="text-gray-300">
+                          {connectionResult.memoryTotal
+                            ? `${(connectionResult.memoryTotal / 1024 ** 3).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} GiB`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div>
+                        CPUs lógicas{' '}
+                        <span className="text-gray-300">
+                          {connectionResult.logicalCpuCount ?? '—'}
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>
               )}
 
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Descrição
+                </label>
                 <textarea
                   {...register('description')}
                   rows={2}
@@ -437,14 +533,14 @@ export default function Nodes() {
                   }}
                   className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
                 >
-                  Cancel
+                  Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={createMutation.isPending}
                   className="px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-primary-800 text-white font-medium rounded-lg transition-colors"
                 >
-                  {createMutation.isPending ? 'Creating...' : 'Create Node'}
+                  {createMutation.isPending ? 'Criando...' : 'Adicionar nó'}
                 </button>
               </div>
             </form>

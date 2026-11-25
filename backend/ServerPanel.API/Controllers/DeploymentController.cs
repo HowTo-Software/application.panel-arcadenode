@@ -5,6 +5,7 @@ using ServerPanel.API.Models;
 using ServerPanel.API.Services;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.ComponentModel.DataAnnotations;
 
 namespace ServerPanel.API.Controllers;
 
@@ -184,7 +185,7 @@ public class DeploymentController : ControllerBase
             v.EnvVariable.Contains("ADMIN") && v.EnvVariable.Contains("PASSWORD"));
         if (adminPassVar != null && !variables.ContainsKey(adminPassVar.EnvVariable))
         {
-            variables[adminPassVar.EnvVariable] = GeneratePassword(12);
+            variables[adminPassVar.EnvVariable] = GeneratePassword(24);
         }
 
         var deployRequest = new DeployServerRequest(
@@ -214,6 +215,8 @@ public class DeploymentController : ControllerBase
         var server = await _serverService.GetServerByIdAsync(serverId);
         if (server == null) return NotFound();
 
+        if (server.OwnerId != GetUserId() && !User.IsInRole("Admin") && !User.IsInRole("SuperAdmin")) return Forbid();
+
         var progress = new DeploymentProgressDto(
             DeploymentId: serverId,
             Status: MapServerStatusToDeploymentStatus(server.Status),
@@ -231,7 +234,7 @@ public class DeploymentController : ControllerBase
     /// </summary>
     [HttpGet("templates/{id}/recommendations")]
     [ProducesResponseType(200)]
-    public IActionResult GetRecommendations(string id, [FromQuery] int playerCount = 10)
+    public IActionResult GetRecommendations(string id, [FromQuery, Range(1, 1000)] int playerCount = 10)
     {
         var template = _templateService.GetTemplateById(id);
         if (template == null) return NotFound();

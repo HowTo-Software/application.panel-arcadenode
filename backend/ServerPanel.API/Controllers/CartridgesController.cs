@@ -86,7 +86,7 @@ public class CartridgesController : ControllerBase
     /// Reload cartridges from disk (admin only)
     /// </summary>
     [HttpPost("reload")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SuperAdmin")]
     public ActionResult Reload()
     {
         _cartridgeService.ReloadCartridges();
@@ -160,13 +160,15 @@ public class CartridgesController : ControllerBase
                 {
                     Minimum = cartridge.Resources.Memory.Minimum,
                     Recommended = cartridge.Resources.Memory.Recommended,
-                    Maximum = cartridge.Resources.Memory.Maximum
+                    Maximum = cartridge.Resources.Memory.Maximum,
+                    Unit = cartridge.Resources.Memory.Unit
                 },
                 Cpu = new ResourceLimitDto
                 {
                     Minimum = cartridge.Resources.Cpu.Minimum,
                     Recommended = cartridge.Resources.Cpu.Recommended,
-                    Maximum = cartridge.Resources.Cpu.Maximum
+                    Maximum = cartridge.Resources.Cpu.Maximum,
+                    Unit = cartridge.Resources.Cpu.Unit
                 }
             },
             Variables = cartridge.Variables.Select(v => new VariableDto

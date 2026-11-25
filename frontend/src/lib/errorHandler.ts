@@ -1,7 +1,9 @@
 import { AxiosError } from 'axios'
+import { getDiagnosticReference } from '@/lib/diagnostics'
 
 interface ApiErrorResponse {
   message?: string
+  title?: string
   errors?: Record<string, string[]>
 }
 
@@ -12,7 +14,7 @@ interface ApiErrorResponse {
 export function getErrorMessage(error: unknown, fallback = 'An unexpected error occurred'): string {
   if (error instanceof AxiosError) {
     const data = error.response?.data as ApiErrorResponse | undefined
-    return data?.message || error.message || fallback
+    return (data?.message || data?.title || error.message || fallback) + getDiagnosticReference(error)
   }
 
   if (error instanceof Error) {

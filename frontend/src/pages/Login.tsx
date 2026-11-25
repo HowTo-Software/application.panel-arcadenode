@@ -11,6 +11,7 @@ import { ArcadeNodeIcon } from '@/components/ArcadeNodeIcon'
 interface LoginForm {
   username: string
   password: string
+  totpCode?: string
 }
 
 export default function Login() {
@@ -28,7 +29,7 @@ export default function Login() {
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true)
     try {
-      const response = await authService.login(data.username, data.password)
+      const response = await authService.login(data.username, data.password, data.totpCode || undefined)
       login(response.token, response.user)
       toast.success('Welcome back!')
       navigate('/')
@@ -83,6 +84,15 @@ export default function Login() {
                 <p className="mt-1 text-sm text-red-400">{errors.password.message}</p>
               )}
             </div>
+
+            <details>
+              <summary className="cursor-pointer text-sm text-gray-300">Use an authenticator code</summary>
+              <label htmlFor="login-totp-code" className="mt-2 block text-sm text-gray-300">Six-digit code</label>
+              <input id="login-totp-code" type="text" inputMode="numeric" autoComplete="one-time-code"
+                maxLength={6} {...register('totpCode', { pattern: { value: /^[0-9]{6}$/, message: 'Enter six digits' } })}
+                className="mt-1 w-full rounded-lg border border-panel-border bg-panel-dark px-4 py-2 text-white" />
+              {errors.totpCode && <p role="alert" className="mt-1 text-sm text-red-400">{errors.totpCode.message}</p>}
+            </details>
 
             <button
               type="submit"

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import Layout from '@/components/Layout'
@@ -8,9 +9,12 @@ import Servers from '@/pages/Servers'
 import ServerDetail from '@/pages/ServerDetail'
 import Nodes from '@/pages/admin/Nodes'
 import Users from '@/pages/admin/Users'
-import DeployWizard from '@/pages/admin/DeployWizard'
+import Eggs from '@/pages/admin/Eggs'
 import Settings from '@/pages/Settings'
 import NotFound from '@/pages/NotFound'
+
+const Migrations = lazy(() => import('@/pages/admin/Migrations'))
+const DeployWizard = lazy(() => import('@/pages/admin/DeployWizard'))
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated)
@@ -64,10 +68,30 @@ function App() {
           }
         />
         <Route
+          path="admin/eggs"
+          element={
+            <AdminRoute>
+              <Eggs />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="admin/migrations"
+          element={
+            <AdminRoute>
+              <Suspense fallback={<p role="status">Carregando migrações…</p>}>
+                <Migrations />
+              </Suspense>
+            </AdminRoute>
+          }
+        />
+        <Route
           path="admin/deploy"
           element={
             <AdminRoute>
-              <DeployWizard />
+              <Suspense fallback={<p role="status">Carregando criação de servidor…</p>}>
+                <DeployWizard />
+              </Suspense>
             </AdminRoute>
           }
         />

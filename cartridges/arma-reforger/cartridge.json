@@ -1,0 +1,80 @@
+{
+    "meta": { "version": "1.0", "format": "ARCADENODE_V1" },
+    "id": "arma-reforger",
+    "name": "Arma Reforger",
+    "author": "ArcadeNode Team",
+    "description": "Dedicated server with scenario, Workshop mod, and cross-platform support.",
+    "category": "simulation",
+    "tags": ["arma", "simulation", "mods"],
+    "website": "https://reforger.armaplatform.com/",
+    "docker": {
+        "image": "arcadenode/arma-reforger:secure",
+        "base_image": "steamcmd/steamcmd:ubuntu-24"
+    },
+    "ports": {
+        "game": { "default": 2001, "protocol": "udp", "required": true, "description": "Game traffic" },
+        "a2s": { "default": 17777, "protocol": "udp", "required": true, "description": "Steam server browser" },
+        "rcon": { "default": 19999, "protocol": "udp", "required": false, "description": "RCON listener on a restored server" }
+    },
+    "resources": {
+        "memory": { "minimum": 3328, "recommended": 8192, "unit": "MB" },
+        "cpu": { "minimum": 2, "recommended": 4, "unit": "cores" },
+        "disk": { "minimum": 5120, "recommended": 30720, "unit": "MB" }
+    },
+    "startup": {
+        "command": "/usr/local/bin/arcadenode-entrypoint",
+        "working_directory": "/home/reforger",
+        "ready_pattern": "Starting RPL server"
+    },
+    "process": { "stop_command": "^C", "stop_timeout": 90, "restart_on_crash": false },
+    "variables": [
+        {
+            "id": "server_name", "name": "Server Name", "env_variable": "SERVER_NAME", "type": "string",
+            "default": "ArcadeNode Reforger Server", "required": true, "fresh_install_only": true,
+            "validation": { "max_length": 255 }
+        },
+        {
+            "id": "server_password", "name": "Join Password", "env_variable": "SERVER_PASSWORD", "type": "string",
+            "default": "", "fresh_install_only": true, "validation": { "max_length": 32 },
+            "ui": { "component": "password" }
+        },
+        {
+            "id": "admin_password", "name": "Administrator Password", "env_variable": "ADMIN_PASSWORD", "type": "string",
+            "description": "Use at least 16 characters without whitespace.",
+            "required": true, "fresh_install_only": true,
+            "validation": { "min_length": 16, "max_length": 32, "pattern": "^\\S+$" },
+            "ui": { "component": "password" }
+        },
+        {
+            "id": "scenario_id", "name": "Scenario ID", "env_variable": "SCENARIO_ID", "type": "string",
+            "default": "{ECC61978EDCC2B5A}Missions/23_Campaign.conf",
+            "required": true, "fresh_install_only": true, "validation": { "max_length": 255 }
+        },
+        {
+            "id": "max_players", "name": "Maximum Players", "env_variable": "MAX_PLAYERS", "type": "integer",
+            "default": 64, "fresh_install_only": true, "validation": { "min": 1, "max": 256 },
+            "ui": { "component": "number" }
+        },
+        {
+            "id": "visible", "name": "Public Server Listing", "env_variable": "VISIBLE", "type": "boolean",
+            "default": true, "fresh_install_only": true, "ui": { "component": "switch" }
+        },
+        {
+            "id": "battl_eye", "name": "BattlEye", "env_variable": "BATTLYE", "type": "boolean",
+            "default": true, "fresh_install_only": true, "ui": { "component": "switch" }
+        },
+        {
+            "id": "disable_third_person", "name": "Disable Third Person", "env_variable": "DISABLE_THIRD_PERSON",
+            "type": "boolean", "default": false, "fresh_install_only": true, "ui": { "component": "switch" }
+        },
+        {
+            "id": "crossplatform", "name": "Cross-platform Play", "env_variable": "CROSSPLATFORM", "type": "boolean",
+            "default": true, "fresh_install_only": true, "ui": { "component": "switch" }
+        },
+        {
+            "id": "mods", "name": "Workshop Mod IDs", "env_variable": "MODS", "type": "string",
+            "description": "Comma-separated Workshop mod IDs.",
+            "default": "", "fresh_install_only": true, "validation": { "max_length": 4096 }
+        }
+    ]
+}

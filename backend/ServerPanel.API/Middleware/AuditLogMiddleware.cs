@@ -2,6 +2,7 @@ using ServerPanel.API.Data;
 using ServerPanel.API.Models;
 using System.Diagnostics;
 using System.Security.Claims;
+using ServerPanel.API.Diagnostics;
 
 namespace ServerPanel.API.Middleware;
 
@@ -14,12 +15,14 @@ namespace ServerPanel.API.Middleware;
 public class AuditLogMiddleware
 {
     private readonly RequestDelegate _next;
+    private readonly IServiceScopeFactory _scopes;
     private readonly ILogger<AuditLogMiddleware> _logger;
 
-    public AuditLogMiddleware(RequestDelegate next, ILogger<AuditLogMiddleware> logger)
+    public AuditLogMiddleware(RequestDelegate next, ILogger<AuditLogMiddleware> logger, IServiceScopeFactory scopes)
     {
         _next = next;
         _logger = logger;
+        _scopes = scopes;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -34,6 +37,11 @@ public class AuditLogMiddleware
         try
         {
             await _next(context);
+        }
+        catch (Exception ex)
+        {
+            context.Items["AuditStatus"] = ApiExceptionHandler.Describe(ex).Status;
+            throw;
         }
         finally
         {
@@ -52,7 +60,8 @@ public class AuditLogMiddleware
     {
         try
         {
-            var db = context.RequestServices.GetRequiredService<PanelDbContext>();
+            await using var scope = _scopes.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<PanelDbContext>();
 
             Guid? userId = null;
             if (Guid.TryParse(context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var parsed))
@@ -60,14 +69,15 @@ public class AuditLogMiddleware
                 userId = parsed;
             }
 
+            userId ??= context.Items["AuditUserId"] as Guid?;
             db.AuditLogs.Add(new AuditLog
             {
                 Timestamp = DateTime.UtcNow,
                 UserId = userId,
-                Username = context.User.FindFirst(ClaimTypes.Name)?.Value,
+                Username = context.User.FindFirst(ClaimTypes.Name)?.Value ?? context.Items["AuditUsername"] as string,
                 Method = context.Request.Method,
                 Path = Truncate(context.Request.Path.Value ?? string.Empty, 2048),
-                StatusCode = context.Response.StatusCode,
+                StatusCode = context.Items["AuditStatus"] as int? ?? context.Response.StatusCode,
                 IpAddress = context.Connection.RemoteIpAddress?.ToString(),
                 UserAgent = Truncate(context.Request.Headers.UserAgent.ToString(), 512),
                 DurationMs = durationMs
@@ -77,8 +87,7 @@ public class AuditLogMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to write audit log for {Method} {Path}",
-                context.Request.Method, context.Request.Path);
+            DiagnosticLog.Write(_logger, DiagnosticPoints.AuditWrite, ex);
         }
     }
 

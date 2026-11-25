@@ -1,33 +1,54 @@
-# ArcadeNode - Game Server Cartridges Builder
-# Builds all game server images
-
-version: '3.8'
-
+# Image builds only. See deploy/README.md for managed provisioning.
 services:
-  # Project Zomboid Server
-  project-zomboid:
-    build:
-      context: ./project-zomboid
-      dockerfile: Dockerfile
-    image: arcadenode/project-zomboid:latest
-
-  # Arma Reforger Server
-  arma-reforger:
-    build:
-      context: ./arma-reforger
-      dockerfile: Dockerfile
-    image: arcadenode/arma-reforger:latest
-
-  # Minecraft Java Server
   minecraft:
-    build:
-      context: ./minecraft
-      dockerfile: Dockerfile
-    image: arcadenode/minecraft:latest
-
-  # Minecraft Bedrock Server
+    profiles: [image-build]
+    build: ./minecraft
+    image: arcadenode/minecraft:secure
+    # Build only: accidental `up` exits without launching a game or publishing ports.
+    entrypoint: ['/bin/sh', '-c', 'echo Use the enrolled panel to provision games >&2; exit 1']
+    user: '10001:10001'
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 16
+    mem_limit: 32m
   minecraft-bedrock:
-    build:
-      context: ./minecraft-bedrock
-      dockerfile: Dockerfile
-    image: arcadenode/minecraft-bedrock:latest
+    profiles: [image-build]
+    build: ./minecraft-bedrock
+    image: arcadenode/minecraft-bedrock:secure
+    # Build only: accidental `up` exits without launching a game or publishing ports.
+    entrypoint: ['/bin/sh', '-c', 'echo Use the enrolled panel to provision games >&2; exit 1']
+    user: '10001:10001'
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 16
+    mem_limit: 32m
+  project-zomboid:
+    profiles: [image-build]
+    build: ./project-zomboid
+    image: arcadenode/project-zomboid:secure
+    # Build only: accidental `up` exits without launching a game or publishing ports.
+    entrypoint: ['/bin/sh', '-c', 'echo Use the enrolled panel to provision games >&2; exit 1']
+    user: '10001:10001'
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 16
+    mem_limit: 32m
+  arma-reforger:
+    profiles: [image-build]
+    build: ./arma-reforger
+    image: arcadenode/arma-reforger:secure
+    # Build only: accidental `up` exits without launching a game or publishing ports.
+    entrypoint: ['/bin/sh', '-c', 'echo Use the enrolled panel to provision games >&2; exit 1']
+    user: '10001:10001'
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 16
+    mem_limit: 32m
