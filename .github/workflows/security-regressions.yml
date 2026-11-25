@@ -130,8 +130,8 @@ jobs:
           sudo install -D -m 0644 deploy/quota/arcadenode-quota.service /etc/systemd/system/arcadenode-quota.service
           sudo install -D -m 0644 deploy/quota/arcadenode-quota.spec /etc/docker/plugins/arcadenode-quota.spec
           sudo systemctl daemon-reload
-          sudo systemctl start arcadenode-quota.service
-          if ! bash scripts/security-probes/quota-plugin-smoke.sh ||
+          if ! sudo systemctl start arcadenode-quota.service ||
+             ! bash scripts/security-probes/quota-plugin-smoke.sh ||
              ! bash scripts/security-probes/managed-volumes-smoke.sh arcadenode-files-check; then
             sudo journalctl -u arcadenode-quota.service --no-pager -n 70
             exit 1

@@ -98,6 +98,7 @@ sudo -n setpriv --reuid=10001 --regid=10001 --clear-groups bash -eu -s -- "$volu
     chmod --reference="$config" "$temp"
     mv -fT -- "$temp" "$config"
     mkdir -p "$source/.cache/Server"
+    mkdir -m 0700 "$source/.cache/arcadenode-sqlite"
     printf "%s\n" DefaultPort=16261 UDPPort=16262 Public=false Open=false RCONPassword= \
         > "$source/.cache/Server/$2.ini"
 CONFIGURE
@@ -110,6 +111,7 @@ source_container="$(docker run -dit --name "$server_id" --network none "${isolat
     --workdir /home/container --env HOME=/home/container --entrypoint /bin/bash "$image" -ec '
         export PATH="$PWD/jre64/bin:$PATH"
         export LD_LIBRARY_PATH="$PWD/linux64:$PWD/natives:$PWD:$PWD/jre64/lib/amd64"
+        export JAVA_TOOL_OPTIONS=-Dorg.sqlite.tmpdir=/home/container/.cache/arcadenode-sqlite
         for library in jre64/lib/libjsig.so jre64/lib/amd64/libjsig.so; do
             if [[ -f "$library" ]]; then export LD_PRELOAD="$PWD/$library"; break; fi
         done

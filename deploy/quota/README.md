@@ -12,7 +12,7 @@ O driver `arcadenode-quota` roda no host Linux com Docker Engine rootful. Ele ac
    ```
 
 3. Instale a saída em `/opt/arcadenode-quota`, sob controle de root. Instale [a unidade systemd](arcadenode-quota.service) em `/etc/systemd/system/` e [a especificação do plugin](arcadenode-quota.spec) em `/etc/docker/plugins/`. O socket Unix permanece em um diretório privado de root. [Descoberta de plugins pelo Docker Engine](https://docs.docker.com/engine/extend/plugin_api/)
-4. Habilite o serviço no node e execute o teste em um ambiente descartável.
+4. Habilite o serviço no node e execute o teste em um ambiente descartável. O systemd aguarda a inicialização do socket antes de concluir a partida do serviço.
 
    ```sh
    sudo systemctl daemon-reload

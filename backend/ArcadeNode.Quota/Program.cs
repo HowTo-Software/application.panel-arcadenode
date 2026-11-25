@@ -14,6 +14,7 @@ await XfsVolumeStore.RequirePrivateSocketDirectoryAsync(socket);
 
 var builder = WebApplication.CreateSlimBuilder();
 builder.Configuration.Sources.Clear();
+builder.Host.UseSystemd();
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.AddServerHeader = false;

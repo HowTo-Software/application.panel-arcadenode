@@ -14,6 +14,7 @@ cat > "$scratch/launcher" <<'LAUNCHER'
 printf '%s\n' "$@" > "$HOME/arguments"
 printf '%s\n' "$PWD" > "$HOME/installation"
 printf '%s\n' "$PATH" > "$HOME/launcher-path"
+printf '%s\n' "${JAVA_TOOL_OPTIONS:-}" > "$HOME/java-tool-options"
 LAUNCHER
 
 seed_restored_state() {
@@ -71,6 +72,8 @@ for layout in pterodactyl managed; do
 
     bash "$scratch/entrypoint.sh"
     test "$(cat "$TEST_PZ_HOME/installation")" = "$installation"
+    test -d "$TEST_PZ_HOME/.cache/arcadenode-sqlite"
+    grep -Fq -- "-Dorg.sqlite.tmpdir=\"$TEST_PZ_HOME/.cache/arcadenode-sqlite\"" "$TEST_PZ_HOME/java-tool-options"
     printf '%s\n' -servername "$SERVER_NAME" -ip 0.0.0.0 -port 16261 -udpport 16262 "-cachedir=$state" > "$scratch/expected-arguments"
     cmp "$scratch/expected-arguments" "$TEST_PZ_HOME/arguments"
     NO_STEAM=true bash "$scratch/entrypoint.sh"
@@ -164,6 +167,7 @@ test "$(stat -c %a "$state/db/Fort.db")" = "$db_mode"
 cmp "$scratch/original.ini" "$state/Server/Fort.ini"
 grep -Fxq -- "-cachedir=$state" "$TEST_PZ_HOME/arguments"
 grep -Fxq '27062' "$TEST_PZ_HOME/arguments"
+grep -Fq -- "-Dorg.sqlite.tmpdir=\"$TEST_PZ_HOME/.cache/arcadenode-sqlite\"" "$TEST_PZ_HOME/java-tool-options"
 
 mkdir -p "$TEST_PZ_HOME/data/Saves/Multiplayer/Fort"
 printf 'separate save' > "$TEST_PZ_HOME/data/Saves/Multiplayer/Fort/map.bin"
