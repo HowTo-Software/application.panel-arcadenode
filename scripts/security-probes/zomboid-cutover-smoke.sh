@@ -61,15 +61,30 @@ installer="$(docker create --name "zomboid-install-$server_id" "${isolated[@]}" 
     --mount "type=bind,src=$volumes/source,dst=/home/container" \
     --entrypoint /usr/bin/steamcmd "$image" \
     +@ShutdownOnFailedCommand 1 +@sSteamCmdForcePlatformType linux +force_install_dir /home/container \
-    +login anonymous +app_info_update 1 +app_update 380870 "${steam_branch[@]}" validate +quit)"
+    +login anonymous +app_info_update 1 +app_info_print 380870 \
+    +app_update 380870 "${steam_branch[@]}" validate +quit)"
 # The base image has already updated SteamCMD as root. Seed a separate writable home for its non-root runtime.
 steam_client="$volumes/steam/.local/share/Steam/steamcmd"
 sudo -n mkdir -p "$steam_client"
 sudo -n docker cp "$installer:/root/.local/share/Steam/steamcmd/." "$steam_client/"
 sudo -n test -x "$steam_client/linux32/steamcmd"
 sudo -n chown -hR 10001:10001 "$volumes/steam"
-timeout --kill-after=15 1800 docker start -a "$installer"
-test "$(docker inspect --format '{{.State.ExitCode}}' "$installer")" = 0
+installed=false
+for delay in 0 5 15; do
+    sleep "$delay"
+    if timeout --kill-after=15 720 docker start -a "$installer" >"$scratch/steam-install.log" 2>&1 &&
+        [[ "$(docker inspect --format '{{.State.ExitCode}}' "$installer")" == 0 ]] &&
+        sudo -n test -x "$volumes/source/ProjectZomboid64"; then
+        installed=true
+        tail -n 12 "$scratch/steam-install.log"
+        break
+    fi
+    tail -n 18 "$scratch/steam-install.log" >&2
+    if [[ "$(docker inspect --format '{{.State.Running}}' "$installer")" == true ]]; then
+        docker stop --time 15 "$installer" >/dev/null
+    fi
+done
+test "$installed" = true
 docker rm "$installer" >/dev/null
 installer=''
 sudo -n test -x "$volumes/source/ProjectZomboid64"
