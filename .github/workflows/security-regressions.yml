@@ -50,6 +50,14 @@ jobs:
       - name: Apply the migration chain and check cross-connection locks on SQL Server
         shell: bash
         run: bash scripts/security-probes/sqlserver-container-smoke.sh
+      - name: Export Pterodactyl accounts from a disposable MariaDB database
+        shell: bash
+        run: |
+          if ! php -r 'exit(extension_loaded("pdo_mysql") ? 0 : 1);'; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq php-mysql
+          fi
+          bash scripts/security-probes/pterodactyl-inventory-smoke.sh
       - run: npm ci
         working-directory: frontend
       - run: npm audit --audit-level=low

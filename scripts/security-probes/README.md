@@ -28,6 +28,8 @@ A recuperação de backups do Pterodactyl testa o tamanho e os checksums registr
 
 A migração de subusuários testa a repetição do lote, o isolamento de permissões por ação e a revogação de agendas e autorizações de download.
 
+O ensaio de contas usa MariaDB em Docker, uma tabela sintética com os campos da origem e um usuário com permissão de leitura. Confere que o exportador PHP mantém o hash bcrypt e exclui da exportação comum contas administrativas e protegidas por TOTP. No SQL Server, outro ensaio aplica a cadeia de migrações e confirma o login com senha e TOTP importados pela identidade de runtime.
+
 A gestão delegada verifica os limites dos direitos repassados, os vínculos protegidos, a inclusão concorrente e a separação das quatro permissões de membros.
 
 O mesmo teste cria um container sintético com os rótulos do Wings e verifica que a captura aceita somente a origem parada. Um reinício da origem invalida o recibo anterior. A suíte da API testa a liberação administrativa com relatórios consistentes e o destino ainda parado.
