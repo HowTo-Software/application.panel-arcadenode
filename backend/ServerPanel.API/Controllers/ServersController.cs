@@ -118,8 +118,6 @@ public class ServersController : ControllerBase
     [ProducesResponseType(400)]
     public async Task<IActionResult> CreateServerFromCartridge([FromBody] CreateCartridgeServerRequest request)
     {
-        _logger.LogDebug("Cartridge server creation requested for NodeId={NodeId}", request?.NodeId);
-        
         if (!ModelState.IsValid)
         {
             var errors = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage);
@@ -242,8 +240,8 @@ public class ServersController : ControllerBase
             }
             catch (Exception error) when (error is IOException or HttpRequestException or Docker.DotNet.DockerApiException or OperationCanceledException)
             {
-                _logger.LogWarning("Could not confirm the runtime after {Action} for server {ServerId} ({ErrorType}).",
-                    action, id, error.GetType().Name);
+                _logger.LogWarning("Could not confirm the runtime after a server power action ({ErrorType}).",
+                    error.GetType().Name);
             }
         }
 

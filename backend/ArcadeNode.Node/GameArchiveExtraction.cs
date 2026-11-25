@@ -93,6 +93,7 @@ internal static class GameArchiveExtraction
     private sealed class StagingContents(string root, Memory<byte> buffer)
     {
         private static readonly StringComparer PathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        private readonly string _rootPrefix = Path.GetFullPath(root + Path.DirectorySeparatorChar);
         private readonly HashSet<string> _entries = new(PathComparer);
         private readonly HashSet<string> _directories = new(PathComparer);
         private int _files;
@@ -105,7 +106,7 @@ internal static class GameArchiveExtraction
             if (directory && name == ".")
             {
                 if (!_entries.Add(".")) throw new InvalidDataException("Duplicate archive root.");
-                return root;
+                return _rootPrefix;
             }
             if (name.Length >= 2 && char.IsAsciiLetter(name[0]) && name[1] == ':')
                 throw new InvalidDataException("Archive entries must use relative paths.");
@@ -114,7 +115,7 @@ internal static class GameArchiveExtraction
                 throw new InvalidDataException("The archive contains an unsupported path.");
             if (!_entries.Add(relative)) throw new InvalidDataException("Duplicate archive entry.");
             if (_entries.Count > MaximumEntries) throw new LinuxGameFiles.FileLimitExceededException();
-            var path = Path.Combine(root, relative);
+            var path = ResolveOutputPath(relative);
             if (directory)
             {
                 EnsureDirectories(relative);
@@ -139,9 +140,17 @@ internal static class GameArchiveExtraction
             while (pending.TryPop(out var directory))
             {
                 CheckEntryBudget();
-                GameBackupRestore.CreatePrivateDirectory(Path.Combine(root, directory));
+                GameBackupRestore.CreatePrivateDirectory(ResolveOutputPath(directory));
                 _directories.Add(directory);
             }
+        }
+
+        private string ResolveOutputPath(string relative)
+        {
+            var path = Path.GetFullPath(Path.Combine(_rootPrefix, relative));
+            if (!path.StartsWith(_rootPrefix, StringComparison.Ordinal))
+                throw new InvalidDataException("The archive entry is outside the staging directory.");
+            return path;
         }
 
         private void CheckEntryBudget()
