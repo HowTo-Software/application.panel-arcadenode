@@ -1,12 +1,16 @@
 name: Security regressions
 on:
   push:
-    branches: [main, 'ci/official-games/bedrock/**', 'ci/official-games/zomboid/**']
+    branches: [main, 'ci/official-games/bedrock/**', 'ci/official-games/java/**', 'ci/official-games/zomboid/**']
   pull_request:
   workflow_dispatch:
     inputs:
       official_bedrock:
         description: Restore a save with the official Linux Bedrock server
+        type: boolean
+        default: false
+      official_java:
+        description: Restore a save with the official Minecraft Java server on Linux
         type: boolean
         default: false
       official_zomboid:
@@ -193,6 +197,24 @@ jobs:
       - name: Preserve a saved scoreboard through a Linux cutover
         shell: bash
         run: bash scripts/security-probes/bedrock-cutover-smoke.sh arcadenode-bedrock-check
+  official-java:
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.official_java) ||
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/ci/official-games/java/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build the managed Minecraft Java image
+        run: docker build -t arcadenode-minecraft-check ./game-servers/minecraft
+      - name: Preserve a saved scoreboard through a Linux cutover
+        shell: bash
+        run: bash scripts/security-probes/minecraft-java-cutover-smoke.sh arcadenode-minecraft-check
   official-zomboid:
     if: >-
       ${{ (github.event_name == 'workflow_dispatch' && inputs.official_zomboid) ||
