@@ -5,7 +5,9 @@ FROM ubuntu:24.04
 
 LABEL maintainer="ArcadeNode"
 LABEL game="Minecraft Bedrock"
-LABEL version="1.0"
+LABEL version="2.0"
+LABEL arcadenode.managed="2"
+LABEL arcadenode.restore="1"
 
 # Environment variables
 ENV SERVER_NAME="ArcadeNode Bedrock Server"
@@ -58,7 +60,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create server user and directories
-RUN useradd -m -s /bin/bash bedrock \
+RUN groupadd -g 10001 bedrock \
+    && useradd -m -u 10001 -g 10001 -s /bin/bash bedrock \
     && mkdir -p /home/bedrock/server \
     && mkdir -p /home/bedrock/data/worlds \
     && mkdir -p /home/bedrock/data/resource_packs \
@@ -66,13 +69,13 @@ RUN useradd -m -s /bin/bash bedrock \
     && chown -R bedrock:bedrock /home/bedrock
 
 # Switch to server user
-USER bedrock
 WORKDIR /home/bedrock
 
 # Copy configuration files
-COPY --chown=bedrock:bedrock entrypoint.sh /home/bedrock/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/arcadenode-entrypoint
+COPY download-bedrock.sh /usr/local/bin/arcadenode-download-bedrock
 COPY --chown=bedrock:bedrock server.properties.template /home/bedrock/server.properties.template
-RUN chmod +x /home/bedrock/entrypoint.sh
+RUN chmod 0555 /usr/local/bin/arcadenode-entrypoint /usr/local/bin/arcadenode-download-bedrock
 
 # Expose ports
 # Game port IPv4 (UDP)
@@ -81,10 +84,10 @@ EXPOSE 19132/udp
 EXPOSE 19133/udp
 
 # Volumes for persistence
-VOLUME ["/home/bedrock/data"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD netcat -zu localhost ${SERVER_PORT} || exit 1
 
-ENTRYPOINT ["/home/bedrock/entrypoint.sh"]
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/arcadenode-entrypoint"]

@@ -13,7 +13,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 REGISTRY="${REGISTRY:-}"  # Optional: Set to push to a registry (e.g., "ghcr.io/username")
-VERSION="${VERSION:-latest}"
+VERSION="${VERSION:-secure}"
 PUSH="${PUSH:-false}"
 PARALLEL="${PARALLEL:-false}"
 

@@ -1,0 +1,99 @@
+﻿{
+  "date": "2026-11-16",
+  "results": [
+    {
+      "id": "P01",
+      "title": "Foreign deployment status lacks ownership check",
+      "reproduced": true,
+      "details": {
+        "foreignStatus": "200",
+        "foreignServerDetail": "Forbid",
+        "note": "Controller/service probe; no HTTP authentication bypass is simulated."
+      }
+    },
+    {
+      "id": "P02",
+      "title": "Ordinary owner can forward resource/startup edits without range validation",
+      "reproduced": true,
+      "details": {
+        "dtoValid": true,
+        "controllerAccepted": true,
+        "note": "Current service persists limits but does not resize the running container."
+      }
+    },
+    {
+      "id": "P03",
+      "title": "Cartridge creation accepts zero limits and invalid port in DTO",
+      "reproduced": true,
+      "details": {
+        "dtoValid": true,
+        "memoryLimit": 0,
+        "port": -1,
+        "controlLegacyCreateRejectsZeroMemory": true
+      }
+    },
+    {
+      "id": "P04",
+      "title": "Game console forwards OS command to shell",
+      "reproduced": true,
+      "details": {
+        "forwardedArgv": [
+          "/bin/sh",
+          "-c",
+          "id"
+        ],
+        "executed": false
+      }
+    },
+    {
+      "id": "P05",
+      "title": "Memory conversion overflows int before conversion to long",
+      "reproduced": true,
+      "details": {
+        "requestedMB": [
+          1024,
+          2048,
+          4096,
+          8192
+        ],
+        "dockerMemoryBytes": [
+          1073741824,
+          -2147483648,
+          0,
+          0
+        ],
+        "note": "Docker Memory=0 means no memory cap. No real container was created."
+      }
+    },
+    {
+      "id": "P06",
+      "title": "Node test reaches arbitrary loopback destination",
+      "reproduced": true,
+      "details": {
+        "reachable": true,
+        "destination": "ephemeral loopback endpoint only",
+        "note": "Admin-only route; not an unauthenticated full HTTP proxy."
+      }
+    },
+    {
+      "id": "P07",
+      "title": "Password shell substitution survives cartridge validation and startup interpolation",
+      "reproduced": true,
+      "details": {
+        "accepted": true,
+        "substitutionSurvives": true,
+        "executed": false,
+        "note": "Admin-only create path; actual launch/entrypoint behavior was not executed."
+      }
+    },
+    {
+      "id": "P08",
+      "title": "Anonymous CSRF token is rejected after login identity changes",
+      "reproduced": true,
+      "details": {
+        "identityMismatch": true,
+        "note": "A fresh authenticated GET can refresh the token. This is a flow defect, not a CSRF bypass."
+      }
+    }
+  ]
+}

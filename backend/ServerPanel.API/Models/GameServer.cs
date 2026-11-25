@@ -33,6 +33,9 @@ public class GameServer
 
     public int CpuLimit { get; set; } = 100; // Percentage (100 = 1 core)
 
+    [MaxLength(320)]
+    public string? CpuSet { get; set; }
+
     public int DiskLimit { get; set; } = 10240; // MB
 
     // Network
@@ -47,6 +50,16 @@ public class GameServer
     public ServerStatus Status { get; set; } = ServerStatus.Stopped;
 
     public bool IsSuspended { get; set; } = false;
+    public bool MigrationPending { get; set; }
+    [MaxLength(64)]
+    public string? RestoredVolumeSha256 { get; set; }
+
+    [MaxLength(64)]
+    public string? MigrationSourceContainerId { get; set; }
+    public DateTime? MigrationSourceStoppedAt { get; set; }
+    public DateTime? MigrationVolumeVerifiedAt { get; set; }
+    public DateTime? MigrationReleasedAt { get; set; }
+    public Guid? MigrationReleasedById { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -84,5 +97,6 @@ public enum ServerStatus
     Stopping = 3,
     Error = 4,
     Installing = 5,
-    Suspended = 6
+    Suspended = 6,
+    Paused = 7
 }

@@ -1,0 +1,20 @@
+{
+  "Docker": {
+    "Nodes": [
+      {
+        "Endpoint": "https://node-01.example.com:2376",
+        "ClientCertificatePath": "/run/node-certs/node-01/client.pem",
+        "ClientKeyPath": "/run/node-certs/node-01/client.key",
+        "CaCertificatePath": "/run/node-certs/node-01/ca.pem",
+        "GameBindAddress": "192.0.2.10",
+        "GameNetwork": "arcadenode-games",
+        "AllowedCpuCores": [0, 1, 2, 3, 4, 5, 6, 7],
+        "CpuCapacityPercent": 800,
+        "QuotaVolumeDriver": "arcadenode-quota",
+        "QuotaSizeOption": "size",
+        "QuotaEnforcementVerified": false
+      }
+    ],
+    "Images": []
+  }
+}

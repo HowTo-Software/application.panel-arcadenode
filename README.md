@@ -1,5 +1,9 @@
 # ArcadeNode
 
+Prototype in active development. Security changes are implemented locally; real SQL/Docker/game acceptance tests are still required. See [the correction report](docs/SECURITY_HARDENING_PT-BR.md). Some game/template features below remain planned.
+
+Troubleshooting: [bilingual warning codes and failure map](docs/DIAGNOSTICS_PT-BR.md), including API logs, browser console and request correlation.
+
 <div align="center">
   <img src="frontend/public/arcadenode.svg" alt="ArcadeNode Logo" width="120" height="120" />
   
@@ -8,7 +12,7 @@
   *Host and manage your game servers with ease*
   
   [![License](https://img.shields.io/badge/license-MIT-purple.svg)](LICENSE)
-  [![.NET](https://img.shields.io/badge/.NET-9.0-purple)](https://dotnet.microsoft.com/)
+  [![.NET](https://img.shields.io/badge/.NET-10.0-purple)](https://dotnet.microsoft.com/)
   [![React](https://img.shields.io/badge/React-18-61dafb)](https://react.dev/)
 </div>
 
@@ -52,52 +56,25 @@
 
 ## 🛠️ Tech Stack
 
-- **Backend**: .NET 9 with ASP.NET Core Web API
+- **Backend**: .NET 10 with ASP.NET Core Web API
 - **Database**: SQL Server 2025
 - **Frontend**: React 18 + TypeScript + Vite + TailwindCSS
 - **Containerization**: Docker & Docker Compose
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Production setup
 
-- Docker Desktop (Windows/Mac) or Docker Engine (Linux)
-- Docker Compose v2.0+
+Follow [deploy/README.md](deploy/README.md) before starting containers. The panel requires external private SQL Server, separate migration/runtime identities, TLS certificates, secret files and operator-enrolled Docker nodes with mTLS and verified disk quotas.
 
-### Running with Docker Compose
+The Compose file publishes only HTTPS through Nginx. It contains no database, plaintext daemon or host Docker socket. Configuration is in [.env.example](.env.example); it contains file paths instead of passwords. The HTTP process does not migrate the database or print administrator credentials. Initial provisioning uses an explicit maintenance command.
 
-```bash
-# Clone and navigate to the project
-cd ArcadeNode
+Read the [security corrections and acceptance limits](docs/SECURITY_HARDENING_PT-BR.md). Existing JWTs/invitations are invalidated by the security migration; legacy containers require deliberate reprovisioning. Remote installers, standalone launch wizards and password-reset shortcuts have been retired.
 
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-```
-
-### Access Points
-
-| Service | URL |
-|---------|-----|
-| 🌐 **Panel** | http://localhost:3000 |
-| 🔌 **API** | http://localhost:5000 |
-| 📖 **API Docs** | http://localhost:5000/swagger |
-
-### Default Credentials
-
-The first startup seeds a single `admin` account:
-
-- Its password comes from `ADMIN_PASSWORD` in your `.env` (see `.env.example`).
-- If `ADMIN_PASSWORD` is unset, a random password is generated and printed **once**
-  in the backend logs - capture it from `docker-compose logs backend`.
-
-> ⚠️ **Important**: Change the password immediately after first login.
 
 ## 💻 Development Setup
 
-### Backend (.NET 9)
+### Backend (.NET 10)
 
 ```bash
 cd backend/ServerPanel.API
@@ -105,7 +82,8 @@ cd backend/ServerPanel.API
 # Restore packages
 dotnet restore
 
-# Run with hot reload
+# Configure local SQL/JWT secret files first; see deploy/README.md.
+# Apply migrations explicitly with the maintenance identity.
 dotnet watch run
 ```
 
@@ -115,7 +93,7 @@ dotnet watch run
 cd frontend
 
 # Install dependencies
-npm install
+npm ci
 
 # Run development server
 npm run dev
@@ -130,9 +108,9 @@ ArcadeNode/
 ├── 📂 scripts/                 # Deployment & management scripts
 │   ├── 📄 deploy.ps1           # Full deployment (PowerShell)
 │   ├── 📄 deploy.sh            # Full deployment (Bash)
-│   ├── 📄 quick-deploy.ps1     # Quick iteration deploy
-│   ├── 📄 deploy-wizard.sh     # Interactive game server wizard
-│   └── 📄 init-setup.sh        # First-time setup
+│   ├── 📄 quick-deploy.ps1     # Retired legacy entrypoint
+│   ├── 📄 deploy-wizard.sh     # Retired legacy entrypoint
+│   └── 📄 init-setup.sh        # Retired legacy entrypoint
 ├── 📂 backend/
 │   ├── 🐳 Dockerfile
 │   └── 📂 ServerPanel.API/
@@ -152,6 +130,8 @@ ArcadeNode/
 │       ├── 📂 stores/         # Zustand state stores
 │       └── 📂 types/          # TypeScript types
 ├── 📂 cartridges/              # Game server cartridge definitions
+│   ├── 📂 arma-reforger/
+│   ├── 📂 minecraft-bedrock/
 │   ├── 📂 minecraft-java/
 │   └── 📂 project-zomboid/
 ├── 📂 game-servers/            # Game server Docker configs
@@ -173,7 +153,8 @@ ArcadeNode/
 | `POST` | `/api/auth/register` | User registration |
 | `GET` | `/api/auth/me` | Get current user |
 | `PUT` | `/api/auth/me` | Update profile |
-| `POST` | `/api/auth/change-password` | Change password |
+| `POST` | `/api/auth/change-password` | Change password and revoke sessions |
+| `POST` | `/api/auth/logout` | Revoke current session |
 
 ### Servers
 
@@ -182,12 +163,17 @@ ArcadeNode/
 | `GET` | `/api/servers` | List all servers |
 | `GET` | `/api/servers/{id}` | Get server details |
 | `POST` | `/api/servers` | Create server (Admin) |
-| `PUT` | `/api/servers/{id}` | Update server |
+| `PUT` | `/api/servers/{id}` | Edit name/description only |
 | `DELETE` | `/api/servers/{id}` | Delete server (Admin) |
 | `POST` | `/api/servers/{id}/power` | Power action |
 | `GET` | `/api/servers/{id}/logs` | Get console logs |
+| `GET` | `/api/servers/{id}/logs/live` | Stream a bounded console window with bearer authentication |
 | `POST` | `/api/servers/{id}/command` | Send command |
 | `GET` | `/api/servers/{id}/stats` | Get resource stats |
+
+### Server schedules
+
+Server schedules are available under `/api/servers/{serverId}/schedules`. Owners and administrators can list or create schedules, set activity with `PUT /{scheduleId}/activity`, and delete with `DELETE /{scheduleId}`. Schedules use five-field UTC cron and accept up to five ordered console or power tasks with an optional delay. Apply the `IndexPendingSchedules` migration before enabling the worker. Set `Schedules__Enabled=false` to pause execution for maintenance. The worker advances the next occurrence before issuing a task. Interrupted runs are skipped. [Cronos](https://github.com/HangfireIO/Cronos)
 
 ### Nodes (Admin)
 
@@ -209,6 +195,12 @@ ArcadeNode/
 | `DELETE` | `/api/admin/users/{id}` | Delete user |
 | `GET` | `/api/admin/nests` | List game categories |
 | `GET` | `/api/admin/eggs` | List game templates |
+| `GET`, `POST` | `/api/admin/egg-catalog/nests` | List or create categories for imported manifests |
+| `GET` | `/api/admin/egg-catalog/nests/{nestId}/eggs` | List imported egg drafts |
+| `POST` | `/api/admin/egg-catalog/nests/{nestId}/eggs/import` | Import a Pterodactyl PTDL v1 or v2 JSON manifest |
+| `GET` | `/api/admin/egg-catalog/eggs/{id}/export` | Download the imported manifest |
+
+See the [Pterodactyl migration preparation guide](docs/MIGRACAO_PTERODACTYL_PT-BR.md) for the source inventory and egg catalog.
 
 ## ⚙️ Environment Variables
 
@@ -217,10 +209,20 @@ ArcadeNode/
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ConnectionStrings__DefaultConnection` | SQL Server connection | - |
-| `Jwt__Key` | JWT signing key | Auto-generated |
+| `Jwt__KeyFile` | File containing a random signing key, at least 48 bytes | Required |
+| `Database__ConnectionStringFile` | File containing verified TLS SQL connection | Required |
 | `Jwt__Issuer` | JWT issuer | ArcadeNode |
 | `Jwt__Audience` | JWT audience | ArcadeNodeUsers |
-| `Docker__NodeUrl` | Docker daemon URL | tcp://node:2375 |
+| `NodeConfigurationPath` | Operator-managed node/image enrollment JSON | Required for nodes |
+| `LocalAssistant__Enabled` | Enables the optional Ollama assistant | `false` |
+| `LocalAssistant__Endpoint` | Fixed private Ollama HTTP(S) origin | Required when enabled |
+| `LocalAssistant__Model` | Installed local Ollama model and tag | Required when enabled |
+| `LocalAssistant__TimeoutSeconds` | Request deadline in seconds, from 10 to 120, including an optional runtime sample | `30` |
+| `LocalAssistant__MaxOutputTokens` | Maximum response tokens, from 16 to 600 | `600` |
+
+The server **Assistente** tab uses the selected Ollama model. In Compose deployments, place the `LocalAssistant` section in the private JSON loaded by `NodeConfigurationPath`. Run Ollama with a local model on a private network reachable by the API. Set `OLLAMA_NO_CLOUD=1` on the Ollama service for local-only operation. The API sends the question, server name, last known status, and configured resource limits. Users can opt in to a current sample from that server's enrolled node. The sample includes the observed state, CPU and memory measurements when available, and exit information for a stopped container. The assistant can answer from panel configuration when the node has no available sample. Model responses are shown as plain text. [Ollama chat API](https://docs.ollama.com/api/chat) · [Local-only configuration](https://docs.ollama.com/faq#how-do-i-disable-ollamas-cloud-features)
+
+To offer CPU affinity in the deploy wizard, set `AllowedCpuCores` to the logical CPU IDs available on each enrolled Docker node. Apply the `ServerCpuAffinity` migration first. The optional selection restricts which logical CPUs the container can run on while its CPU quota still applies. Servers may share a logical CPU.
 
 ### Frontend
 
@@ -254,7 +256,7 @@ ArcadeNode/
 
 ## 🗄️ Database
 
-The panel uses SQL Server 2025 with Entity Framework Core. The database is automatically migrated on startup.
+The panel uses SQL Server 2025 with Entity Framework Core. Database migrations run only through the explicit maintenance command described in deploy/README.md.
 
 ### Models
 - **User** - Panel users with roles
@@ -266,7 +268,7 @@ The panel uses SQL Server 2025 with Entity Framework Core. The database is autom
 - **Backup** - Server backups
 - **Schedule** - Scheduled tasks
 
-## 🔒 Security
+## Security
 
 - **JWT Authentication** - Secure token-based auth
 - **BCrypt Hashing** - Industry-standard password hashing

@@ -14,6 +14,7 @@ export const getStatusColor = (status: ServerStatus): string => {
     case 'Installing':
       return 'bg-blue-500 animate-pulse-status'
     case 'Suspended':
+    case 'Paused':
       return 'bg-orange-500'
     default:
       return 'bg-gray-500'

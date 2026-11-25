@@ -12,7 +12,7 @@ public class Egg
     [MaxLength(100)]
     public string Name { get; set; } = string.Empty;
 
-    [MaxLength(500)]
+    [MaxLength(4000)]
     public string Description { get; set; } = string.Empty;
 
     [Required]
@@ -45,6 +45,11 @@ public class Egg
     public Nest Nest { get; set; } = null!;
 
     public string? CopyFrom { get; set; }
+
+    public string? PterodactylManifest { get; set; }
+
+    [MaxLength(64)]
+    public string? PterodactylSha256 { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

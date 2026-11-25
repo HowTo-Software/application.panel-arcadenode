@@ -1,16 +1,15 @@
-# Build stage
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
-RUN npm install -g npm@11.7.0
-COPY package.json ./
-COPY package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
-RUN npm run build
+# A production bundle always uses the same-origin API, regardless of local demo files.
+RUN VITE_API_URL=/api VITE_DEMO_MODE=false npm run build
 
-# Production stage
-FROM nginx:alpine
+FROM nginx:stable-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx-main.conf /etc/nginx/nginx.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+USER 101:101
+EXPOSE 8443
+ENTRYPOINT ["nginx", "-g", "daemon off;"]

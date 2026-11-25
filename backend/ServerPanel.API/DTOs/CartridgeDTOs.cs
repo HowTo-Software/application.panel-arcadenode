@@ -62,6 +62,7 @@ public class ResourceLimitDto
     public int Minimum { get; set; }
     public int Recommended { get; set; }
     public int Maximum { get; set; }
+    public string? Unit { get; set; }
 }
 
 public class VariableDto

@@ -12,7 +12,7 @@ public sealed class PasswordComplexityAttribute : ValidationAttribute
 
     public override bool IsValid(object? value)
     {
-        if (value is not string password || password.Length < MinimumLength)
+        if (value is not string password || password.Length < MinimumLength || !Security.PasswordVerifier.IsVerifiablePassword(password))
         {
             return false;
         }

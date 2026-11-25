@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using ServerPanel.API.DTOs;
 using ServerPanel.API.Services;
+using ServerPanel.API.Diagnostics;
 
 namespace ServerPanel.API.Controllers;
 
@@ -11,10 +12,12 @@ namespace ServerPanel.API.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(IAuthService authService)
+    public AuthController(IAuthService authService, ILogger<AuthController> logger)
     {
         _authService = authService;
+        _logger = logger;
     }
 
     /// <summary>
@@ -29,8 +32,12 @@ public class AuthController : ControllerBase
         var response = await _authService.LoginAsync(request);
         if (response == null)
         {
+            HttpContext.Items[DiagnosticLog.ContextKey] = DiagnosticPoints.Login.Code;
+            DiagnosticLog.Write(_logger, DiagnosticPoints.Login);
             return Unauthorized(new { message = "Invalid credentials" });
         }
+        HttpContext.Items["AuditUserId"] = response.User.Id;
+        HttpContext.Items["AuditUsername"] = response.User.Username;
         return Ok(response);
     }
 
@@ -46,8 +53,12 @@ public class AuthController : ControllerBase
         var (response, error) = await _authService.RegisterAsync(request);
         if (response == null)
         {
+            HttpContext.Items[DiagnosticLog.ContextKey] = DiagnosticPoints.Registration.Code;
+            DiagnosticLog.Write(_logger, DiagnosticPoints.Registration);
             return BadRequest(new { message = error ?? "Registration failed" });
         }
+        HttpContext.Items["AuditUserId"] = response.User.Id;
+        HttpContext.Items["AuditUsername"] = response.User.Username;
         return CreatedAtAction(nameof(GetCurrentUser), response);
     }
 
@@ -93,6 +104,7 @@ public class AuthController : ControllerBase
     /// <summary>
     /// Change password
     /// </summary>
+    [EnableRateLimiting("sensitive")]
     [HttpPost("change-password")]
     [Authorize]
     [ProducesResponseType(200)]
@@ -109,6 +121,16 @@ public class AuthController : ControllerBase
         }
 
         return Ok(new { message = "Password changed successfully" });
+    }
+
+    [HttpPost("logout")]
+    [Authorize]
+    public async Task<IActionResult> Logout()
+    {
+        var userId = GetUserId();
+        if (userId is null || !Guid.TryParse(User.FindFirst("sid")?.Value, out var sessionId)) return Unauthorized();
+        await _authService.LogoutAsync(userId.Value, sessionId);
+        return NoContent();
     }
 
     private Guid? GetUserId()
