@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ServerPanel.API.Common;
@@ -107,20 +108,26 @@ public class AdminController : ControllerBase
     /// </summary>
     [HttpGet("nests")]
     [ProducesResponseType(typeof(IEnumerable<NestDto>), 200)]
-    public async Task<IActionResult> GetNests()
+    public async Task<IActionResult> GetNests(int? page = null, int? pageSize = null)
     {
+        var paging = ServerPanel.API.Common.Pagination.Resolve(page, pageSize);
+        var total = await _context.Nests.CountAsync();
         var nests = await _context.Nests
+            .OrderBy(item => item.Id)
+            .Skip(ServerPanel.API.Common.Pagination.Skip(paging.Page, paging.PageSize))
+            .Take(paging.PageSize)
             .Include(n => n.Eggs)
             .Select(n => new NestDto(
                 n.Id,
                 n.Name,
                 n.Description,
                 n.Author,
-                n.Eggs.Count,
+                n.Eggs.Count(e => e.PterodactylSha256 == null),
                 n.CreatedAt
             ))
             .ToListAsync();
 
+        Response.ApplyPaginationHeaders(new PagedResult<NestDto>(nests, paging.Page, paging.PageSize, total));
         return Ok(nests);
     }
 
@@ -129,11 +136,16 @@ public class AdminController : ControllerBase
     /// </summary>
     [HttpGet("nests/{nestId:guid}/eggs")]
     [ProducesResponseType(typeof(IEnumerable<EggDto>), 200)]
-    public async Task<IActionResult> GetEggs(Guid nestId)
+    public async Task<IActionResult> GetEggs(Guid nestId, int? page = null, int? pageSize = null)
     {
-        var eggs = await _context.Eggs
+        var paging = ServerPanel.API.Common.Pagination.Resolve(page, pageSize);
+        var query = _context.Eggs.Where(e => e.NestId == nestId && e.PterodactylSha256 == null);
+        var total = await query.CountAsync();
+        var eggs = await query
+            .OrderBy(item => item.Id)
+            .Skip(ServerPanel.API.Common.Pagination.Skip(paging.Page, paging.PageSize))
+            .Take(paging.PageSize)
             .Include(e => e.Nest)
-            .Where(e => e.NestId == nestId)
             .Select(e => new EggDto(
                 e.Id,
                 e.Name,
@@ -147,6 +159,7 @@ public class AdminController : ControllerBase
             ))
             .ToListAsync();
 
+        Response.ApplyPaginationHeaders(new PagedResult<EggDto>(eggs, paging.Page, paging.PageSize, total));
         return Ok(eggs);
     }
 
@@ -155,9 +168,15 @@ public class AdminController : ControllerBase
     /// </summary>
     [HttpGet("eggs")]
     [ProducesResponseType(typeof(IEnumerable<EggDto>), 200)]
-    public async Task<IActionResult> GetAllEggs()
+    public async Task<IActionResult> GetAllEggs(int? page = null, int? pageSize = null)
     {
-        var eggs = await _context.Eggs
+        var paging = ServerPanel.API.Common.Pagination.Resolve(page, pageSize);
+        var query = _context.Eggs.Where(e => e.PterodactylSha256 == null);
+        var total = await query.CountAsync();
+        var eggs = await query
+            .OrderBy(item => item.Id)
+            .Skip(ServerPanel.API.Common.Pagination.Skip(paging.Page, paging.PageSize))
+            .Take(paging.PageSize)
             .Include(e => e.Nest)
             .Select(e => new EggDto(
                 e.Id,
@@ -172,6 +191,7 @@ public class AdminController : ControllerBase
             ))
             .ToListAsync();
 
+        Response.ApplyPaginationHeaders(new PagedResult<EggDto>(eggs, paging.Page, paging.PageSize, total));
         return Ok(eggs);
     }
 
@@ -188,7 +208,7 @@ public class AdminController : ControllerBase
         [FromQuery] Guid? userId = null,
         [FromQuery] string? method = null)
     {
-        if (page < 1) page = 1;
+        page = Math.Clamp(page, 1, 1000000);
         if (pageSize is < 1 or > 200) pageSize = 50;
 
         var query = _context.AuditLogs.AsQueryable();
@@ -232,11 +252,14 @@ public class AdminController : ControllerBase
     /// </summary>
     [HttpGet("invites")]
     [ProducesResponseType(typeof(IEnumerable<InviteCodeDto>), 200)]
-    public async Task<IActionResult> GetInviteCodes()
+    public async Task<IActionResult> GetInviteCodes(int? page = null, int? pageSize = null)
     {
+        var paging = ServerPanel.API.Common.Pagination.Resolve(page, pageSize);
+        var total = await _context.InviteCodes.CountAsync();
         var invites = await _context.InviteCodes
             .Include(i => i.CreatedByUser)
-            .OrderByDescending(i => i.CreatedAt)
+            .OrderByDescending(i => i.CreatedAt).ThenBy(i => i.Id)
+            .Skip(ServerPanel.API.Common.Pagination.Skip(paging.Page, paging.PageSize)).Take(paging.PageSize)
             .Select(i => new InviteCodeDto(
                 i.Id,
                 i.Code,
@@ -250,6 +273,7 @@ public class AdminController : ControllerBase
             ))
             .ToListAsync();
 
+        Response.ApplyPaginationHeaders(new PagedResult<InviteCodeDto>(invites, paging.Page, paging.PageSize, total));
         return Ok(invites);
     }
 
@@ -263,13 +287,15 @@ public class AdminController : ControllerBase
         var userId = GetUserId();
         if (userId == null) return Unauthorized();
 
+        if (request.MaxUses is < 1 or > 100 || request.ExpiresAt <= DateTime.UtcNow)
+            return BadRequest(new { message = "Set a valid invitation usage limit and expiration." });
         var code = GenerateInviteCode();
 
         var invite = new InviteCode
         {
             Code = code,
             MaxUses = request.MaxUses,
-            ExpiresAt = request.ExpiresAt,
+            ExpiresAt = request.ExpiresAt ?? DateTime.UtcNow.AddDays(7),
             CreatedByUserId = userId.Value
         };
 
@@ -305,6 +331,7 @@ public class AdminController : ControllerBase
         if (invite == null) return NotFound();
 
         invite.IsRevoked = true;
+        invite.ConcurrencyVersion = Guid.NewGuid();
         await _context.SaveChangesAsync();
 
         return NoContent();
@@ -319,11 +346,11 @@ public class AdminController : ControllerBase
     private static string GenerateInviteCode()
     {
         const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-        var random = new Random();
-        var code = new char[8];
+
+        var code = new char[16];
         for (int i = 0; i < code.Length; i++)
         {
-            code[i] = chars[random.Next(chars.Length)];
+            code[i] = chars[RandomNumberGenerator.GetInt32(chars.Length)];
         }
         return new string(code);
     }

@@ -1,83 +1,111 @@
 services:
-  # SQL Server 2025 Database
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2025-latest
-    container_name: arcadenode_sqlserver
-    environment:
-      - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
-      - MSSQL_PID=Developer
-    ports:
-      - "1433:1433"
-    volumes:
-      - sqlserver_data:/var/opt/mssql
-    networks:
-      - arcadenode_network
-    healthcheck:
-      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "${MSSQL_SA_PASSWORD}" -C -Q "SELECT 1" || exit 1
-      interval: 10s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-
-  # .NET 9 Backend API
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: arcadenode_backend
+    build: ./backend
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://+:5000
-      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=ArcadeNode;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;
-      - Jwt__Key=${JWT_KEY}
-      - Seed__AdminPassword=${ADMIN_PASSWORD}
-    ports:
-      - "5000:5000"
-    depends_on:
-      sqlserver:
-        condition: service_healthy
-    networks:
-      - arcadenode_network
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5000
+      AllowedHosts: ${PANEL_HOST:?Set PANEL_HOST to the public DNS name}
+      Database__ConnectionStringFile: /run/secrets/database_connection
+      Jwt__KeyFile: /run/secrets/jwt_key
+      Security__DataProtectionKeyDirectory: /var/lib/arcadenode/keys
+      NodeConfigurationPath: /etc/arcadenode/nodes.json
+      Security__TrustedProxies__0: 172.30.0.10
+    secrets:
+      - database_connection
+      - jwt_key
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./cartridges:/app/cartridges:ro
+      - data_protection_keys:/var/lib/arcadenode/keys
+      - ${NODE_CONFIG_FILE:?Set NODE_CONFIG_FILE}:/etc/arcadenode/nodes.json:ro
+      - ${NODE_CERTS_DIR:?Set NODE_CERTS_DIR}:/run/node-certs:ro
+    networks:
+      panel:
+        ipv4_address: 172.30.0.11
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
 
-  # React Frontend
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: arcadenode_frontend
-    environment:
-      - VITE_API_URL=http://localhost:5000/api
+    build: ./frontend
     ports:
-      - "3000:80"
-    depends_on:
-      - backend
+      - '${PANEL_BIND_IP:-127.0.0.1}:443:8443'
+    depends_on: [backend]
+    secrets:
+      - source: tls_certificate
+        target: tls_certificate
+      - source: tls_private_key
+        target: tls_private_key
     networks:
-      - arcadenode_network
+      panel:
+        ipv4_address: 172.30.0.10
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 128m
+    cpus: 1
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
 
-  # Game Server Node (Docker-in-Docker)
-  node:
-    image: docker:dind
-    container_name: arcadenode_node
-    privileged: true
+  # Explicit maintenance identity; never started by `compose up`.
+  migrate:
+    profiles: [maintenance]
+    build: ./backend
+    command: [--migrate]
     environment:
-      - DOCKER_TLS_CERTDIR=
+      ASPNETCORE_ENVIRONMENT: Production
+      Database__ConnectionStringFile: /run/secrets/migration_connection
+      Seed__AdminPasswordFile: /run/secrets/admin_password
+      Seed__AdminUsername: ${ARCADENODE_BOOTSTRAP_USERNAME:-admin}
+      Seed__AdminEmail: ${ARCADENODE_BOOTSTRAP_EMAIL:-admin@panel.local}
+      Security__DataProtectionKeyDirectory: /var/lib/arcadenode/keys
+      NodeConfigurationPath: /etc/arcadenode/nodes.json
+    secrets: [migration_connection, admin_password]
     volumes:
-      - node_data:/var/lib/docker
-      - game_servers:/srv/gameservers
-    networks:
-      - arcadenode_network
-    ports:
-      - "2375:2375"
-
-networks:
-  arcadenode_network:
-    driver: bridge
+      - data_protection_keys:/var/lib/arcadenode/keys
+      - ./cartridges:/app/cartridges:ro
+      - ${NODE_CONFIG_FILE:?Set NODE_CONFIG_FILE}:/etc/arcadenode/nodes.json:ro
+    networks: [panel]
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1g
 
 volumes:
-  sqlserver_data:
-  node_data:
-  game_servers:
+  data_protection_keys:
+
+networks:
+  panel:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+secrets:
+  database_connection:
+    file: ${DATABASE_CONNECTION_FILE:?Set DATABASE_CONNECTION_FILE}
+  migration_connection:
+    file: ${MIGRATION_CONNECTION_FILE:?Set MIGRATION_CONNECTION_FILE}
+  jwt_key:
+    file: ${JWT_KEY_FILE:?Set JWT_KEY_FILE}
+  admin_password:
+    file: ${ADMIN_PASSWORD_FILE:?Set ADMIN_PASSWORD_FILE}
+  tls_certificate:
+    file: ${TLS_CERTIFICATE_FILE:?Set TLS_CERTIFICATE_FILE}
+  tls_private_key:
+    file: ${TLS_PRIVATE_KEY_FILE:?Set TLS_PRIVATE_KEY_FILE}

@@ -11,20 +11,39 @@ public class PanelDbContext : DbContext
 
     public DbSet<User> Users { get; set; }
     public DbSet<GameServer> Servers { get; set; }
+    public DbSet<ServerMember> ServerMembers { get; set; }
     public DbSet<Node> Nodes { get; set; }
     public DbSet<Egg> Eggs { get; set; }
     public DbSet<Nest> Nests { get; set; }
     public DbSet<Allocation> Allocations { get; set; }
     public DbSet<ApiKey> ApiKeys { get; set; }
     public DbSet<Backup> Backups { get; set; }
+    public DbSet<BackupDownloadGrant> BackupDownloadGrants { get; set; }
+    public DbSet<FileDownloadGrant> FileDownloadGrants { get; set; }
     public DbSet<Schedule> Schedules { get; set; }
     public DbSet<ScheduleTask> ScheduleTasks { get; set; }
     public DbSet<InviteCode> InviteCodes { get; set; }
     public DbSet<AuditLog> AuditLogs { get; set; }
+    public DbSet<AuthSession> AuthSessions { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<AuthSession>(entity =>
+        {
+            entity.HasIndex(s => new { s.UserId, s.ExpiresAt });
+            entity.HasOne(s => s.User).WithMany().HasForeignKey(s => s.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<GameServer>().HasIndex(s => new { s.NodeId, s.Port }).IsUnique();
+
+        modelBuilder.Entity<ServerMember>(entity =>
+        {
+            entity.HasKey(member => new { member.ServerId, member.UserId });
+            entity.HasIndex(member => new { member.UserId, member.ServerId });
+            entity.HasOne<GameServer>().WithMany().HasForeignKey(member => member.ServerId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(member => member.User).WithMany().HasForeignKey(member => member.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
 
         // User configuration
         modelBuilder.Entity<User>(entity =>
@@ -58,6 +77,7 @@ public class PanelDbContext : DbContext
         modelBuilder.Entity<Node>(entity =>
         {
             entity.HasIndex(e => e.Fqdn).IsUnique();
+            entity.HasIndex(e => e.DockerEndpoint).IsUnique();
         });
 
         // Allocation configuration
@@ -79,6 +99,10 @@ public class PanelDbContext : DbContext
         // Egg configuration
         modelBuilder.Entity<Egg>(entity =>
         {
+            entity.HasIndex(e => e.NestId);
+            entity.HasIndex(e => new { e.NestId, e.PterodactylSha256 })
+                .IsUnique()
+                .HasFilter("[PterodactylSha256] IS NOT NULL");
             entity.HasOne(e => e.Nest)
                 .WithMany(n => n.Eggs)
                 .HasForeignKey(e => e.NestId)
@@ -99,15 +123,37 @@ public class PanelDbContext : DbContext
         // Backup configuration
         modelBuilder.Entity<Backup>(entity =>
         {
+            entity.HasIndex(b => new { b.IsQueued, b.NextAttemptAt, b.CreatedAt });
+            entity.HasIndex(b => new { b.RestoreStatus, b.RestoreRequestedAt });
+            entity.HasIndex(b => new { b.DeletionStatus, b.CreatedAt });
             entity.HasOne(e => e.Server)
                 .WithMany(s => s.Backups)
                 .HasForeignKey(e => e.ServerId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<BackupDownloadGrant>(entity =>
+        {
+            entity.HasKey(grant => grant.TokenHash);
+            entity.Property(grant => grant.TokenHash).HasMaxLength(64).IsUnicode(false);
+            entity.Property(grant => grant.SessionVersion).HasMaxLength(32).IsUnicode(false);
+            entity.HasIndex(grant => grant.ExpiresAt);
+        });
+
+        modelBuilder.Entity<FileDownloadGrant>(entity =>
+        {
+            entity.HasKey(grant => grant.TokenHash);
+            entity.Property(grant => grant.TokenHash).HasMaxLength(64).IsUnicode(false);
+            entity.Property(grant => grant.SessionVersion).HasMaxLength(32).IsUnicode(false);
+            entity.Property(grant => grant.Path).HasMaxLength(Security.SecurityLimits.MaxGamePathLength);
+            entity.HasIndex(grant => grant.ExpiresAt);
+        });
+
         // Schedule configuration
         modelBuilder.Entity<Schedule>(entity =>
         {
+            entity.HasIndex(s => new { s.IsActive, s.IsProcessing, s.NextRunAt });
+            entity.HasIndex(s => new { s.IsProcessing, s.PendingBackupId });
             entity.HasOne(e => e.Server)
                 .WithMany(s => s.Schedules)
                 .HasForeignKey(e => e.ServerId)
@@ -171,7 +217,7 @@ public class PanelDbContext : DbContext
             Variables = @"[
                 {""Name"":""Server JAR"",""EnvVariable"":""SERVER_JARFILE"",""DefaultValue"":""server.jar"",""UserViewable"":true,""UserEditable"":true},
                 {""Name"":""Minecraft Version"",""EnvVariable"":""MINECRAFT_VERSION"",""DefaultValue"":""latest"",""UserViewable"":true,""UserEditable"":true}
-            ]"
+            ]".ReplaceLineEndings("\r\n") // Match the existing seed in the SQL Server migration snapshot on all hosts.
         });
     }
 }

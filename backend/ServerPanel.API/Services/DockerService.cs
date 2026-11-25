@@ -1,400 +1,439 @@
-using Docker.DotNet;
-using Docker.DotNet.Models;
-using ServerPanel.API.DTOs;
-using ServerPanel.API.Models;
+using System.ComponentModel.DataAnnotations;
+using System.Globalization;
+using System.Net;
 using System.Text;
 using System.Text.Json;
+using Docker.DotNet;
+using Docker.DotNet.Models;
+using Microsoft.EntityFrameworkCore;
+using ServerPanel.API.Data;
+using ServerPanel.API.DTOs;
+using ServerPanel.API.Models;
+using ServerPanel.API.Security;
+using ServerPanel.API.Diagnostics;
 
 namespace ServerPanel.API.Services;
 
-public class DockerService : IDockerService
+public sealed class DockerService(PanelDbContext db, IDockerClientFactory clients, DockerEnrollment enrollment, ServerOperationGate operations, ILogger<DockerService> logger) : IDockerService
 {
-    private readonly DockerClient _dockerClient;
-    private readonly IConfiguration _configuration;
-    private readonly ILogger<DockerService> _logger;
-    private readonly string[] _allowedImagePrefixes;
+    public Task<string> CreateContainerAsync(GameServer server) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.Provisioning, () => CreateContainerAsyncCore(server, null), server.Id, server.NodeId);
 
-    public DockerService(IDockerClientFactory clientFactory, IConfiguration configuration, ILogger<DockerService> logger)
+    public Task<string> PrepareRestoredContainerAsync(GameServer server, string digest) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.Provisioning, () => CreateContainerAsyncCore(server, digest), server.Id, server.NodeId);
+
+    private async Task<string> CreateContainerAsyncCore(GameServer server, string? restoredDigest)
     {
-        _configuration = configuration;
-        _logger = logger;
-        _dockerClient = clientFactory.GetClient();
-        _allowedImagePrefixes = configuration.GetSection("Docker:AllowedImagePrefixes").Get<string[]>()
-            ?? Array.Empty<string>();
+        var node = await db.Nodes.SingleAsync(n => n.Id == server.NodeId);
+        var enrolled = enrollment.RequireNode(node.DockerEndpoint);
+        enrollment.RequireProvisioning(enrolled);
+        var image = enrollment.RequireImage(server.DockerImage);
+        var client = clients.GetClient(node.DockerEndpoint);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var imageInfo = await DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerImage,
+            () => client.Images.InspectImageAsync(image.Image, timeout.Token), server.Id, node.Id);
+        if (Value(imageInfo.Config?.Labels, "arcadenode.managed") != "2" || imageInfo.Config?.Volumes?.Count > 0)
+            throw DiagnosticLog.Mark(new InvalidOperationException("Rebuild managed images without implicit unbounded volumes before provisioning."), DiagnosticPoints.DockerImage);
+        if (restoredDigest is not null && Value(imageInfo.Config?.Labels, "arcadenode.restore") != "1")
+            throw DiagnosticLog.Mark(new InvalidOperationException("The approved image does not declare support for restored volumes."), DiagnosticPoints.DockerImage);
+
+        var volumeName = $"arcadenode-{server.Id:N}-data";
+        var quota = checked((long)server.DiskLimit * 1024 * 1024).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var volume = await DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerVolume,
+            () => restoredDigest is not null ? client.Volumes.InspectAsync(volumeName, timeout.Token) : client.Volumes.CreateAsync(new VolumesCreateParameters
+        {
+            Name = volumeName, Driver = enrolled.QuotaVolumeDriver,
+            DriverOpts = new Dictionary<string, string> { [enrolled.QuotaSizeOption] = quota },
+            Labels = new Dictionary<string, string> { ["panel.server.id"] = server.Id.ToString() }
+        }, timeout.Token), server.Id, node.Id);
+        if (volume.Name != volumeName || volume.Driver != enrolled.QuotaVolumeDriver || Value(volume.Options, enrolled.QuotaSizeOption) != quota ||
+            Value(volume.Labels, "panel.server.id") != server.Id.ToString() ||
+            (restoredDigest is not null && Value(volume.Labels, "panel.restore.sha256") != restoredDigest))
+            throw DiagnosticLog.Mark(new InvalidOperationException("The data volume did not confirm its expected quota configuration."), DiagnosticPoints.DockerVolume);
+
+        var container = ContainerPolicy.Build(server, enrolled, image, volumeName);
+        if (restoredDigest is not null)
+        {
+            container.HostConfig.Mounts[0].VolumeOptions = new VolumeOptions { NoCopy = true };
+            // A retry after Docker completed but before the database commit may reuse its stopped result.
+            try
+            {
+                var previous = await client.Containers.InspectContainerAsync(container.Name, timeout.Token);
+                if (previous.State is null || previous.State.Running || string.IsNullOrEmpty(previous.ID) ||
+                    previous.Config?.Image != image.Image ||
+                    (previous.HostConfig?.CpusetCpus ?? "") != (container.HostConfig.CpusetCpus ?? "") ||
+                    container.Labels.Any(label => Value(previous.Config?.Labels, label.Key) != label.Value) ||
+                    previous.Mounts?.Count != 1 || !previous.Mounts.Any(mount => mount.Type == "volume" &&
+                        mount.Name == volumeName && mount.Destination == image.DataPath))
+                    throw new InvalidOperationException("Existing migration container does not match the staged target.");
+                return previous.ID;
+            }
+            catch (DockerApiException error) when (error.StatusCode == HttpStatusCode.NotFound) { }
+        }
+        var env = JsonSerializer.Deserialize<Dictionary<string, string>>(server.EnvironmentVariables ?? "{}") ?? new();
+        SecurityLimits.EnvironmentVariables(env);
+        env.Remove("ARCADENODE_RESTORED_VOLUME");
+        env.Remove("ARCADENODE_PUBLISHED_PORTS");
+        if (restoredDigest is not null) env["ARCADENODE_RESTORED_VOLUME"] = "true";
+        if (restoredDigest is not null)
+        {
+            var ports = JsonSerializer.Deserialize<int[]>(server.AdditionalPorts ?? "[]") ?? [];
+            env["ARCADENODE_PUBLISHED_PORTS"] = string.Join(',', ports.Prepend(server.Port)
+                .Select(port => port.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        }
+        env["SERVER_MEMORY"] = server.MemoryLimit.ToString(CultureInfo.InvariantCulture);
+        // Leave a quarter of the container's memory for non-heap JVM allocations and native code.
+        env["ARCADENODE_JAVA_HEAP_MIB"] = (server.MemoryLimit * 3 / 4).ToString(CultureInfo.InvariantCulture);
+        env["SERVER_PORT"] = server.Port.ToString(CultureInfo.InvariantCulture);
+        container.Env = env.Select(pair => $"{pair.Key}={pair.Value}").ToArray();
+        // Image ENTRYPOINT is trusted and fixed. User/cartridge text is never evaluated by a shell.
+        var created = await DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerCreate,
+            () => client.Containers.CreateContainerAsync(container, timeout.Token), server.Id, node.Id);
+        return created.ID;
     }
 
-    private void ValidateImageAllowed(string image)
+    private async Task<(GameServer Server, DockerClient Client, ContainerInspectResponse Inspect)> ResolveAsync(Guid id, CancellationToken token)
     {
-        if (_allowedImagePrefixes.Length == 0)
-        {
-            _logger.LogWarning(
-                "Docker image allow-list is not configured; pulling '{Image}' without restriction. " +
-                "Set Docker:AllowedImagePrefixes to enforce.", image);
-            return;
-        }
+        var server = await db.Servers.AsNoTracking().Include(s => s.Node).SingleOrDefaultAsync(s => s.Id == id, token)
+            ?? throw new InvalidOperationException("Server not found.");
+        if (string.IsNullOrWhiteSpace(server.ContainerId)) throw new InvalidOperationException("Container not provisioned.");
+        var client = clients.GetClient(server.Node.DockerEndpoint);
+        var inspect = await DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerIdentity,
+            () => client.Containers.InspectContainerAsync(server.ContainerId, token), server.Id, server.NodeId);
+        if (!MatchesContainerLabels(server.Id, server.NodeId, server.OwnerId, inspect.Config?.Labels))
+            throw DiagnosticLog.Mark(new InvalidOperationException("Container ownership labels do not match the server record."), DiagnosticPoints.DockerIdentity);
+        return (server, client, inspect);
+    }
 
-        if (!_allowedImagePrefixes.Any(prefix => image.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+    internal static bool MatchesContainerLabels(Guid serverId, Guid nodeId, Guid ownerId, IDictionary<string, string>? labels) =>
+        Value(labels, "panel.server.id") == serverId.ToString() && Value(labels, "panel.node.id") == nodeId.ToString() &&
+        Value(labels, "panel.owner.id") == ownerId.ToString();
+
+    internal static ServerStatus? RuntimeStatus(string? state) => state switch
+    {
+        "running" => ServerStatus.Running,
+        "created" or "exited" => ServerStatus.Stopped,
+        "paused" => ServerStatus.Paused,
+        "restarting" => ServerStatus.Starting,
+        "dead" or "removing" => ServerStatus.Error,
+        _ => null
+    };
+
+    private static ContainerRuntime? ReadRuntime(ContainerState? state)
+    {
+        if (state is null || RuntimeStatus(state.Status) is not { } status) return null;
+        if (status == ServerStatus.Running && (!state.Running || state.Paused || state.Restarting)) return null;
+        DateTime? startedAt = DateTimeOffset.TryParse(state.StartedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal,
+            out var started) && started > DateTimeOffset.UnixEpoch ? started.UtcDateTime : null;
+        var exited = state.Status is "exited" or "dead";
+        return new ContainerRuntime(status, startedAt, exited ? state.ExitCode : null, exited ? state.OOMKilled : null);
+    }
+
+    public async Task<ContainerRuntime?> ObserveRuntimeAsync(Guid serverId, CancellationToken token)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        try
         {
-            throw new InvalidOperationException($"Docker image '{image}' is not in the configured allow-list.");
+            var (server, _, inspect) = await ResolveAsync(serverId, timeout.Token);
+            return server.IsSuspended ? new ContainerRuntime(ServerStatus.Suspended, null) : ReadRuntime(inspect.State);
+        }
+        catch (DockerApiException error) when (error.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new ContainerRuntime(ServerStatus.Error, null);
         }
     }
 
-    public async Task<string> CreateContainerAsync(GameServer server)
+    public Task<bool> StartContainerAsync(Guid serverId) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerPower, () => StartContainerAsyncCore(serverId), serverId);
+
+    public async Task<bool> IsContainerStoppedAsync(Guid serverId, CancellationToken token)
     {
-        // Parse environment variables
-        var envVars = new List<string>();
-        if (!string.IsNullOrEmpty(server.EnvironmentVariables))
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        var (_, _, inspect) = await ResolveAsync(serverId, timeout.Token);
+        return IsStopped(inspect.State);
+    }
+
+    private async Task<bool> StartContainerAsyncCore(Guid serverId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await using var operation = await operations.AcquireAsync(serverId, timeout.Token);
+        var (server, client, _) = await ResolveAsync(serverId, timeout.Token);
+        return await StartResolvedAsync(server, client, timeout);
+    }
+
+    private async Task<bool> StartResolvedAsync(GameServer server, DockerClient client, CancellationTokenSource timeout)
+    {
+        if (server.IsSuspended) throw new ValidationException("Server is suspended.");
+        try
         {
-            var vars = JsonSerializer.Deserialize<Dictionary<string, string>>(server.EnvironmentVariables);
-            if (vars != null)
+            return await client.Containers.StartContainerAsync(server.ContainerId, new ContainerStartParameters(), timeout.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            // Docker may have started the container before the request expired.
+            using var check = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
             {
-                foreach (var (key, value) in vars)
+                var observed = await client.Containers.InspectContainerAsync(server.ContainerId, check.Token);
+                if (MatchesContainerLabels(server.Id, server.NodeId, server.OwnerId, observed.Config?.Labels) &&
+                    ReadRuntime(observed.State)?.Status == ServerStatus.Running)
                 {
-                    envVars.Add($"{key}={value}");
+                    logger.LogInformation("Container is running after the Docker start request timed out. ServerId={ServerId} NodeId={NodeId}",
+                        server.Id, server.NodeId);
+                    return true;
                 }
             }
+            catch (Exception error) when (error is IOException or HttpRequestException or DockerApiException or OperationCanceledException)
+            {
+                DiagnosticLog.Write(logger, DiagnosticPoints.DockerIdentity, error, server.Id, server.NodeId, LogLevel.Warning);
+            }
+            throw;
+        }
+    }
+
+    public Task<bool> StopContainerAsync(Guid serverId) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerPower, () => StopContainerAsyncCore(serverId), serverId);
+
+    public Task<bool> KillContainerAsync(Guid serverId) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerPower, () => KillContainerAsyncCore(serverId), serverId);
+
+    private async Task<bool> StopContainerAsyncCore(Guid serverId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var operation = await operations.AcquireAsync(serverId, timeout.Token);
+        var (server, client, inspect) = await ResolveAsync(serverId, timeout.Token);
+        if (!server.IsSuspended && ShutdownProfile(enrollment.FindImage(server.DockerImage)) is { } shutdown)
+            return await StopGameAsync(server, client, inspect.State, shutdown.Command, shutdown.WaitSeconds);
+
+        return await client.Containers.StopContainerAsync(server.ContainerId, new ContainerStopParameters { WaitBeforeKillSeconds = 10 }, timeout.Token);
+    }
+
+    private async Task<bool> KillContainerAsyncCore(Guid serverId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var operation = await operations.AcquireAsync(serverId, timeout.Token);
+        var (server, client, _) = await ResolveAsync(serverId, timeout.Token);
+        if (server.IsSuspended) throw new ValidationException("Server is suspended.");
+        try
+        {
+            await client.Containers.KillContainerAsync(server.ContainerId, new ContainerKillParameters { Signal = "SIGKILL" }, timeout.Token);
+            return true;
+        }
+        catch (DockerApiException error) when (error.StatusCode == HttpStatusCode.Conflict)
+        {
+            // Retrying an already-stopped process is harmless. Other Docker conflicts still fail.
+            var state = (await client.Containers.InspectContainerAsync(server.ContainerId, timeout.Token)).State;
+            if (state is { Running: false, Status: "created" or "exited" }) return true;
+            throw;
+        }
+    }
+
+    public Task<bool> RestartContainerAsync(Guid serverId) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerPower, () => RestartContainerAsyncCore(serverId), serverId);
+
+    private async Task<bool> RestartContainerAsyncCore(Guid serverId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var operation = await operations.AcquireAsync(serverId, timeout.Token);
+        var (server, client, inspect) = await ResolveAsync(serverId, timeout.Token);
+        if (server.IsSuspended) throw new ValidationException("Server is suspended.");
+        if (ShutdownProfile(enrollment.FindImage(server.DockerImage)) is { } shutdown)
+        {
+            if (!await StopGameAsync(server, client, inspect.State, shutdown.Command, shutdown.WaitSeconds))
+                return false;
+
+            using var startTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var (current, currentClient, stopped) = await ResolveAsync(serverId, startTimeout.Token);
+            if (current.NodeId != server.NodeId || current.ContainerId != server.ContainerId || !IsStopped(stopped.State)) return false;
+            return await StartResolvedAsync(current, currentClient, startTimeout);
         }
 
-        // Add default environment variables
-        envVars.Add($"SERVER_MEMORY={server.MemoryLimit}");
-        envVars.Add($"SERVER_PORT={server.Port}");
+        await client.Containers.RestartContainerAsync(server.ContainerId, new ContainerRestartParameters { WaitBeforeKillSeconds = 10 }, timeout.Token);
+        return true;
+    }
 
-        var containerConfig = new CreateContainerParameters
+    private static (string? Command, int WaitSeconds)? ShutdownProfile(ApprovedGameImage? image) =>
+        (image?.Alias ?? image?.Image, image?.DataPath) switch
         {
-            Name = $"panel-server-{server.Identifier}",
-            Image = server.DockerImage,
-            Env = envVars,
-            Tty = true,
-            AttachStdin = true,
-            AttachStdout = true,
-            AttachStderr = true,
-            OpenStdin = true,
-            HostConfig = new HostConfig
-            {
-                Memory = server.MemoryLimit * 1024 * 1024, // Convert MB to bytes
-                CPUPercent = server.CpuLimit,
-                PortBindings = new Dictionary<string, IList<PortBinding>>
-                {
-                    {
-                        $"{server.Port}/tcp",
-                        new List<PortBinding>
-                        {
-                            new PortBinding { HostPort = server.Port.ToString() }
-                        }
-                    },
-                    {
-                        $"{server.Port}/udp",
-                        new List<PortBinding>
-                        {
-                            new PortBinding { HostPort = server.Port.ToString() }
-                        }
-                    }
-                },
-                Binds = new List<string>
-                {
-                    $"panel-server-{server.Identifier}-data:/data"
-                },
-                RestartPolicy = new RestartPolicy
-                {
-                    Name = RestartPolicyKind.No
-                }
-            },
-            // Let the image define its own user and working directory
-            Labels = new Dictionary<string, string>
-            {
-                { "panel.server.id", server.Id.ToString() },
-                { "panel.server.identifier", server.Identifier },
-                { "panel.owner.id", server.OwnerId.ToString() }
-            }
+            ("arcadenode/minecraft:secure", "/home/minecraft") => ("stop", 45),
+            ("arcadenode/minecraft-bedrock:secure", "/home/bedrock") => ("stop", 90),
+            ("arcadenode/project-zomboid:secure", "/home/pzserver") => ("quit", 90),
+            ("arcadenode/arma-reforger:secure", "/home/reforger") => (null, 90),
+            _ => null
         };
 
-        // Set startup command if provided
-        if (!string.IsNullOrEmpty(server.StartupCommand))
-        {
-            containerConfig.Cmd = new List<string> { "/bin/sh", "-c", server.StartupCommand };
-        }
-
-        // Enforce the image allow-list (when configured) before pulling.
-        ValidateImageAllowed(server.DockerImage);
-
-        // Pull image first
+    private async Task<bool> StopGameAsync(GameServer server, DockerClient client, ContainerState? state, string? command, int waitSeconds)
+    {
+        if (IsStopped(state)) return true;
+        if (ReadRuntime(state)?.Status != ServerStatus.Running) return false;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(waitSeconds));
+        using var send = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        send.CancelAfter(TimeSpan.FromSeconds(5));
+        var rejected = false;
         try
         {
-            await _dockerClient.Images.CreateImageAsync(
-                new ImagesCreateParameters { FromImage = server.DockerImage },
-                null,
-                new Progress<JSONMessage>());
+            if (command is null)
+                await client.Containers.KillContainerAsync(server.ContainerId, new ContainerKillParameters { Signal = "SIGINT" }, send.Token);
+            else
+                await WriteConsoleLineAsync(server, command, send.Token);
         }
-        catch (Exception ex)
+        catch (Exception error) when (error is IOException or HttpRequestException or DockerApiException or OperationCanceledException)
         {
-            _logger.LogWarning(ex, "Image pull for {Image} did not complete (it may already exist locally)",
-                server.DockerImage);
+            rejected = error is HttpRequestException { StatusCode: not null } or DockerApiException;
+            // A lost response may still have delivered the request. Observe the process without a second write.
+            DiagnosticLog.Write(logger, DiagnosticPoints.DockerPower, error, server.Id, server.NodeId, LogLevel.Warning);
         }
 
-        var container = await _dockerClient.Containers.CreateContainerAsync(containerConfig);
-        return container.ID;
+        using var poll = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try
+        {
+            do
+            {
+                var observed = await client.Containers.InspectContainerAsync(server.ContainerId, timeout.Token);
+                if (!MatchesContainerLabels(server.Id, server.NodeId, server.OwnerId, observed.Config?.Labels))
+                    throw DiagnosticLog.Mark(new InvalidOperationException("Container ownership labels changed during shutdown."), DiagnosticPoints.DockerIdentity);
+                if (observed.State is { Running: false, Status: "exited" } stopped)
+                    return !stopped.OOMKilled && (stopped.ExitCode == 0 || (command is null && stopped.ExitCode == 130));
+                if (rejected || observed.State?.Status is "created" or "dead" or "removing") return false;
+            }
+            while (await poll.WaitForNextTickAsync(timeout.Token));
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested) { }
+
+        logger.LogWarning("Game shutdown was not confirmed. ServerId={ServerId} NodeId={NodeId}", server.Id, server.NodeId);
+        return false;
     }
 
-    public async Task<bool> StartContainerAsync(string containerId)
+    private static bool IsStopped(ContainerState? state) => state is { Running: false, Status: "created" or "exited" };
+
+    public Task<bool> RemoveContainerAsync(Guid serverId) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerPower, () => RemoveContainerAsyncCore(serverId), serverId);
+
+    private async Task<bool> RemoveContainerAsyncCore(Guid serverId)
     {
-        try
-        {
-            return await _dockerClient.Containers.StartContainerAsync(containerId, new ContainerStartParameters());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to start container {ContainerId}", containerId);
-            return false;
-        }
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await using var operation = await operations.AcquireAsync(serverId, timeout.Token);
+        var (server, client, _) = await ResolveAsync(serverId, timeout.Token);
+        if (server.Status != ServerStatus.Stopped && server.Status != ServerStatus.Error)
+            throw new ValidationException("Stop the server before removing it.");
+        await client.Containers.RemoveContainerAsync(server.ContainerId, new ContainerRemoveParameters { Force = false, RemoveVolumes = false }, timeout.Token);
+        return true;
     }
 
-    public async Task<bool> StopContainerAsync(string containerId)
+    public Task<ServerStatsDto?> GetContainerStatsAsync(Guid serverId, CancellationToken token = default) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerStats, () => GetContainerStatsAsyncCore(serverId, token), serverId);
+
+    private async Task<ServerStatsDto?> GetContainerStatsAsyncCore(Guid serverId, CancellationToken token)
     {
-        try
-        {
-            return await _dockerClient.Containers.StopContainerAsync(containerId, new ContainerStopParameters
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        var (server, client, inspect) = await ResolveAsync(serverId, timeout.Token);
+        var runtime = ReadRuntime(inspect.State);
+        if (runtime is null) return null;
+        if (server.IsSuspended || runtime.Status != ServerStatus.Running)
+            return new ServerStatsDto(serverId, server.IsSuspended ? ServerStatus.Suspended : runtime.Status, 0, 0, null, 0, 0, 0, DateTime.UtcNow)
             {
-                WaitBeforeKillSeconds = 10
-            });
-        }
-        catch (Exception ex)
+                StartedAt = runtime.StartedAt, ExitCode = runtime.ExitCode, OomKilled = runtime.OomKilled
+            };
+        ContainerStatsResponse? stats = null;
+        await client.Containers.GetContainerStatsAsync(server.ContainerId, new ContainerStatsParameters { Stream = false },
+            new InlineProgress<ContainerStatsResponse>(value => stats = value), timeout.Token);
+        if (stats is null)
         {
-            _logger.LogError(ex, "Failed to stop container {ContainerId}", containerId);
-            return false;
-        }
-    }
-
-    public async Task<bool> RestartContainerAsync(string containerId)
-    {
-        try
-        {
-            await _dockerClient.Containers.RestartContainerAsync(containerId, new ContainerRestartParameters
-            {
-                WaitBeforeKillSeconds = 10
-            });
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to restart container {ContainerId}", containerId);
-            return false;
-        }
-    }
-
-    public async Task<bool> RemoveContainerAsync(string containerId)
-    {
-        try
-        {
-            // Stop container first
-            await StopContainerAsync(containerId);
-
-            await _dockerClient.Containers.RemoveContainerAsync(containerId, new ContainerRemoveParameters
-            {
-                Force = true,
-                RemoveVolumes = false
-            });
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to remove container {ContainerId}", containerId);
-            return false;
-        }
-    }
-
-    public async Task<ServerStatsDto?> GetContainerStatsAsync(Guid serverId, string containerId)
-    {
-        try
-        {
-            // Get container stats using progress-based API
-            ContainerStatsResponse? statsResponse = null;
-            var progress = new Progress<ContainerStatsResponse>(response => statsResponse = response);
-            
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await _dockerClient.Containers.GetContainerStatsAsync(
-                containerId,
-                new ContainerStatsParameters { Stream = false },
-                progress,
-                cts.Token);
-
-            if (statsResponse == null)
-            {
-                return null;
-            }
-
-            // Calculate CPU percentage
-            // CPU % = (container_cpu_delta / system_cpu_delta) * number_of_cpus * 100
-            double cpuPercent = 0;
-            if (statsResponse.CPUStats?.CPUUsage?.TotalUsage != null &&
-                statsResponse.PreCPUStats?.CPUUsage?.TotalUsage != null &&
-                statsResponse.CPUStats?.SystemUsage != null &&
-                statsResponse.PreCPUStats?.SystemUsage != null)
-            {
-                var cpuDelta = (double)(statsResponse.CPUStats.CPUUsage.TotalUsage - statsResponse.PreCPUStats.CPUUsage.TotalUsage);
-                var systemDelta = (double)(statsResponse.CPUStats.SystemUsage - statsResponse.PreCPUStats.SystemUsage);
-                
-                if (systemDelta > 0 && cpuDelta > 0)
-                {
-                    int cpuCount = statsResponse.CPUStats.CPUUsage.PercpuUsage?.Count 
-                                   ?? (statsResponse.CPUStats.OnlineCPUs > 0 ? (int)statsResponse.CPUStats.OnlineCPUs : 1);
-                    cpuPercent = (cpuDelta / systemDelta) * cpuCount * 100.0;
-                }
-            }
-
-            // Get memory usage (already in bytes)
-            long memoryUsage = (long)(statsResponse.MemoryStats?.Usage ?? 0);
-            
-            // Subtract cache from memory usage if available (for more accurate "used" memory)
-            if (statsResponse.MemoryStats?.Stats?.TryGetValue("cache", out var cache) == true)
-            {
-                memoryUsage = Math.Max(0, memoryUsage - (long)cache);
-            }
-
-            // Get network stats - sum all interfaces
-            long networkRx = 0;
-            long networkTx = 0;
-            if (statsResponse.Networks != null)
-            {
-                foreach (var network in statsResponse.Networks.Values)
-                {
-                    networkRx += (long)(network.RxBytes);
-                    networkTx += (long)(network.TxBytes);
-                }
-            }
-
-            // Get disk usage from BlkIO stats
-            long diskUsage = 0;
-            if (statsResponse.BlkioStats?.IoServiceBytesRecursive != null)
-            {
-                foreach (var io in statsResponse.BlkioStats.IoServiceBytesRecursive)
-                {
-                    if (io.Op?.ToLower() == "read" || io.Op?.ToLower() == "write")
-                    {
-                        diskUsage += (long)io.Value;
-                    }
-                }
-            }
-
-            return new ServerStatsDto(
-                serverId,
-                ServerStatus.Running,
-                memoryUsage,
-                Math.Round(cpuPercent, 2),
-                diskUsage,
-                networkRx,
-                networkTx,
-                DateTime.UtcNow
-            );
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to get container stats for {ContainerId}", containerId);
+            DiagnosticLog.Write(logger, DiagnosticPoints.DockerStats, serverId: serverId, nodeId: server.NodeId);
             return null;
         }
-    }
-
-    public async Task<string> GetContainerLogsAsync(string containerId, int tail = 100)
-    {
-        try
+        double cpu = 0;
+        if (stats.CPUStats?.CPUUsage is not null && stats.PreCPUStats?.CPUUsage is not null)
         {
-            _logger.LogDebug("Fetching logs for container {ContainerId}, tail={Tail}", containerId, tail);
-            
-            // First check if container exists and get its state
-            var containerInfo = await _dockerClient.Containers.InspectContainerAsync(containerId);
-            var isTty = containerInfo.Config?.Tty ?? false;
-            
-            _logger.LogDebug("Container {ContainerId} state: {State}, TTY: {TTY}", 
-                containerId, containerInfo.State?.Status, isTty);
-
-            // Get logs - pass true for tty param when container has TTY enabled
-            using var logs = await _dockerClient.Containers.GetContainerLogsAsync(containerId, isTty, new ContainerLogsParameters
+            var delta = (double)stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage;
+            var total = (double)stats.CPUStats.SystemUsage - stats.PreCPUStats.SystemUsage;
+            var cores = stats.CPUStats.OnlineCPUs > 0
+                ? stats.CPUStats.OnlineCPUs
+                : (uint)(stats.CPUStats.CPUUsage.PercpuUsage?.Count ?? 0);
+            if (delta > 0 && total > 0 && cores > 0) cpu = delta / total * cores * 100;
+        }
+        long memory = (long)(stats.MemoryStats?.Usage ?? 0);
+        if (stats.MemoryStats?.Stats is { } memoryStats)
+        {
+            foreach (var metric in new[] { "total_inactive_file", "inactive_file", "cache" })
             {
-                ShowStdout = true,
-                ShowStderr = true,
-                Tail = tail.ToString(),
-                Timestamps = true
-            });
-
-            var buffer = new byte[81920];
-            using var ms = new MemoryStream();
-            
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            
-            if (isTty)
-            {
-                // For TTY containers, CopyOutputToAsync is available
-                await logs.CopyOutputToAsync(null, ms, ms, cts.Token);
+                if (!memoryStats.TryGetValue(metric, out var cache)) continue;
+                if (cache < (ulong)memory) memory -= (long)cache;
+                break;
             }
-            else
-            {
-                // For non-TTY containers, use ReadOutputAsync for multiplexed stream
-                var result = await logs.ReadOutputAsync(buffer, 0, buffer.Length, cts.Token);
-                while (result.Count > 0)
-                {
-                    ms.Write(buffer, 0, result.Count);
-                    result = await logs.ReadOutputAsync(buffer, 0, buffer.Length, cts.Token);
-                }
-            }
-            
-            var logContent = Encoding.UTF8.GetString(ms.ToArray());
-            _logger.LogDebug("Got {Length} bytes of logs for container {ContainerId}", logContent.Length, containerId);
-            return logContent;
         }
-        catch (Docker.DotNet.DockerContainerNotFoundException)
+        var readWrite = stats.BlkioStats?.IoServiceBytesRecursive?.Where(io => io.Op is "Read" or "Write" or "read" or "write").Sum(io => (long)io.Value) ?? 0;
+        return new ServerStatsDto(serverId, runtime.Status, memory, Math.Round(cpu, 2), null, readWrite,
+            stats.Networks?.Values.Sum(net => (long)net.RxBytes) ?? 0, stats.Networks?.Values.Sum(net => (long)net.TxBytes) ?? 0, DateTime.UtcNow)
         {
-            _logger.LogWarning("Container {ContainerId} not found", containerId);
-            return "[Container not found]";
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching logs for container {ContainerId}", containerId);
-            return $"[Error fetching logs: {ex.Message}]";
-        }
+            StartedAt = runtime.StartedAt, MetricsAvailable = true
+        };
     }
 
-    // Shell metacharacters that enable command chaining, substitution, or redirection.
-    private static readonly char[] ShellMetacharacters =
-        { ';', '&', '|', '$', '`', '\\', '>', '<', '(', ')', '{', '}', '\n', '\r', '"', '\'' };
+    public Task<string> GetContainerLogsAsync(Guid serverId, int tail = 100) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerLogs, () => GetContainerLogsAsyncCore(serverId, tail), serverId);
 
-    public async Task<bool> SendCommandAsync(string containerId, string command)
+    public async Task FollowContainerLogsAsync(Guid serverId, int tail,
+        Func<ReadOnlyMemory<byte>, CancellationToken, Task> receive, CancellationToken token)
     {
-        if (string.IsNullOrWhiteSpace(command))
-        {
-            _logger.LogWarning("Rejected empty command for container {ContainerId}", containerId);
-            return false;
-        }
-
-        if (command.Length > 512)
-        {
-            _logger.LogWarning("Rejected command exceeding length limit for container {ContainerId}", containerId);
-            return false;
-        }
-
-        if (command.IndexOfAny(ShellMetacharacters) >= 0)
-        {
-            _logger.LogWarning(
-                "Rejected command containing shell metacharacters for container {ContainerId}", containerId);
-            return false;
-        }
-
-        try
-        {
-            var exec = await _dockerClient.Exec.ExecCreateContainerAsync(containerId, new ContainerExecCreateParameters
+        var (server, client, _) = await ResolveAsync(serverId, token);
+        using var logs = await client.Containers.GetContainerLogsAsync(server.ContainerId, true,
+            new ContainerLogsParameters
             {
-                AttachStdin = true,
-                AttachStdout = true,
-                AttachStderr = true,
-                Cmd = new[] { "/bin/sh", "-c", command },
-                Tty = true
-            });
-
-            await _dockerClient.Exec.StartContainerExecAsync(exec.ID);
-            return true;
-        }
-        catch (Exception ex)
+                ShowStdout = true, ShowStderr = true, Follow = true, Timestamps = true,
+                Tail = Math.Clamp(tail, 1, SecurityLimits.MaxLogLines).ToString(System.Globalization.CultureInfo.InvariantCulture)
+            }, token);
+        var buffer = new byte[8192];
+        var remaining = SecurityLimits.MaxLogBytes;
+        while (remaining > 0)
         {
-            _logger.LogError(ex, "Failed to send command to container {ContainerId}", containerId);
-            return false;
+            var chunk = await logs.ReadOutputAsync(buffer, 0, Math.Min(buffer.Length, remaining), token);
+            if (chunk.Count == 0) break;
+            await receive(buffer.AsMemory(0, chunk.Count), token);
+            remaining -= chunk.Count;
         }
     }
+
+    private async Task<string> GetContainerLogsAsyncCore(Guid serverId, int tail = 100)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var (server, client, _) = await ResolveAsync(serverId, timeout.Token);
+        using var logs = await client.Containers.GetContainerLogsAsync(server.ContainerId, true,
+            new ContainerLogsParameters { ShowStdout = true, ShowStderr = true, Tail = Math.Clamp(tail, 1, SecurityLimits.MaxLogLines).ToString(), Timestamps = true }, timeout.Token);
+        using var output = new MemoryStream();
+        var buffer = new byte[8192];
+        while (output.Length < SecurityLimits.MaxLogBytes)
+        {
+            var result = await logs.ReadOutputAsync(buffer, 0, Math.Min(buffer.Length, SecurityLimits.MaxLogBytes - (int)output.Length), timeout.Token);
+            if (result.Count == 0) break;
+            output.Write(buffer, 0, result.Count);
+        }
+        return Encoding.UTF8.GetString(output.ToArray());
+    }
+
+    public Task<bool> SendCommandAsync(Guid serverId, string command) =>
+        DiagnosticLog.RunAsync(logger, DiagnosticPoints.DockerConsole, () => SendCommandAsyncCore(serverId, command), serverId);
+
+    private async Task<bool> SendCommandAsyncCore(Guid serverId, string command)
+    {
+        if (string.IsNullOrWhiteSpace(command) || command.Length > 512 || command.Any(char.IsControl))
+            throw new ValidationException("Commands must be one line of at most 512 characters.");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var operation = await operations.AcquireAsync(serverId, timeout.Token);
+        var (server, _, inspect) = await ResolveAsync(serverId, timeout.Token);
+        if (server.IsSuspended || inspect.State is not { Status: "running", Running: true })
+            throw new ValidationException("Server is unavailable for commands.");
+        await WriteConsoleLineAsync(server, command, timeout.Token);
+        return true;
+    }
+
+    private Task WriteConsoleLineAsync(GameServer server, string command, CancellationToken token) =>
+        clients.WriteConsoleInputAsync(server.Node.DockerEndpoint, server.ContainerId!, Encoding.UTF8.GetBytes(command + "\n"), token);
+
+    private static string? Value(IDictionary<string, string>? values, string key) => values is not null && values.TryGetValue(key, out var value) ? value : null;
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T> { public void Report(T value) => report(value); }
 }

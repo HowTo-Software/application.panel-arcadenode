@@ -133,6 +133,9 @@ public class CartridgePort
     [JsonPropertyName("required")]
     public bool Required { get; set; } = true;
 
+    [JsonPropertyName("use_default_on_restore")]
+    public bool UseDefaultOnRestore { get; set; }
+
     [JsonPropertyName("description")]
     public string? Description { get; set; }
 }
@@ -300,6 +303,9 @@ public class CartridgeVariable
 
     [JsonPropertyName("required")]
     public bool Required { get; set; } = false;
+
+    [JsonPropertyName("fresh_install_only")]
+    public bool FreshInstallOnly { get; set; }
 
     [JsonPropertyName("user_viewable")]
     public bool UserViewable { get; set; } = true;

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ServerPanel.API.Models;
+using ServerPanel.API.Diagnostics;
 
 namespace ServerPanel.API.Services;
 
@@ -34,12 +35,13 @@ public interface ICartridgeService
     /// <summary>
     /// Build environment variables for a server from cartridge and user values
     /// </summary>
-    Dictionary<string, string> BuildEnvironmentVariables(Cartridge cartridge, Dictionary<string, object> userValues, int port);
+    Dictionary<string, string> BuildEnvironmentVariables(Cartridge cartridge, Dictionary<string, object> userValues, int port,
+        IReadOnlyDictionary<string, int>? namedPorts = null, bool forRestore = false);
 
     /// <summary>
     /// Validate user-provided variable values against cartridge definitions
     /// </summary>
-    (bool IsValid, List<string> Errors) ValidateVariables(Cartridge cartridge, Dictionary<string, object> values);
+    (bool IsValid, List<string> Errors) ValidateVariables(Cartridge cartridge, Dictionary<string, object> values, bool forRestore = false);
 
     /// <summary>
     /// Get the startup command with variables substituted
@@ -75,11 +77,11 @@ public class CartridgeService : ICartridgeService
         // Look for cartridges directory relative to the app
         var cartridgesPath = _configuration["CartridgesPath"] ?? GetDefaultCartridgesPath();
         
-        _logger.LogInformation("Loading cartridges from: {Path}", cartridgesPath);
+        _logger.LogDebug("Loading cartridges from the configured directory");
 
         if (!Directory.Exists(cartridgesPath))
         {
-            _logger.LogWarning("Cartridges directory not found: {Path}", cartridgesPath);
+            DiagnosticLog.Write(_logger, DiagnosticPoints.CartridgeDirectory);
             return;
         }
 
@@ -89,7 +91,7 @@ public class CartridgeService : ICartridgeService
             var cartridgeFile = Path.Combine(dir, "cartridge.json");
             if (!File.Exists(cartridgeFile))
             {
-                _logger.LogDebug("No cartridge.json found in {Dir}", dir);
+                _logger.LogDebug("Skipping directory without cartridge.json");
                 continue;
             }
 
@@ -101,16 +103,18 @@ public class CartridgeService : ICartridgeService
                 if (cartridge != null && !string.IsNullOrEmpty(cartridge.Id))
                 {
                     _cartridges[cartridge.Id] = cartridge;
-                    _logger.LogInformation("Loaded cartridge: {Id} - {Name}", cartridge.Id, cartridge.Name);
+                    _logger.LogDebug("Cartridge loaded");
                 }
+                else DiagnosticLog.Write(_logger, DiagnosticPoints.CartridgeLoad);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to load cartridge from {File}", cartridgeFile);
+                DiagnosticLog.Write(_logger, DiagnosticPoints.CartridgeLoad, ex);
             }
         }
 
         _logger.LogInformation("Loaded {Count} cartridges", _cartridges.Count);
+        if (_cartridges.Count == 0) DiagnosticLog.Write(_logger, DiagnosticPoints.CartridgeLoad, level: LogLevel.Warning);
     }
 
     private string GetDefaultCartridgesPath()
@@ -213,55 +217,67 @@ public class CartridgeService : ICartridgeService
         return sanitized;
     }
 
-    public Dictionary<string, string> BuildEnvironmentVariables(Cartridge cartridge, Dictionary<string, object> userValues, int port)
+    public Dictionary<string, string> BuildEnvironmentVariables(Cartridge cartridge, Dictionary<string, object> userValues, int port,
+        IReadOnlyDictionary<string, int>? namedPorts = null, bool forRestore = false)
     {
-        var env = new Dictionary<string, string>();
-
-        // Add system variables first
-        if (cartridge.SystemVariables != null)
+        var env = cartridge.SystemVariables is { } system ? new Dictionary<string, string>(system) : new();
+        var templates = env.Keys.ToHashSet(StringComparer.Ordinal);
+        void SetLiteral(string name, string value)
         {
-            foreach (var (key, value) in cartridge.SystemVariables)
-            {
-                env[key] = value;
-            }
+            env[name] = value;
+            templates.Remove(name);
         }
 
         // Add port variables
         var portIndex = 0;
+        var defaultPrimaryPort = cartridge.Ports.Values.FirstOrDefault()?.Default;
         foreach (var (portName, portDef) in cartridge.Ports)
         {
             var envName = $"{portName.ToUpperInvariant()}_PORT";
-            var portValue = portIndex == 0 ? port : port + portIndex;
-            env[envName] = portValue.ToString();
+            var portValue = namedPorts?.TryGetValue(portName, out var configured) == true ? configured :
+                forRestore && portDef.UseDefaultOnRestore ? portDef.Default :
+                portIndex == 0 || portDef.Default == defaultPrimaryPort ? port : port + portIndex;
+            SetLiteral(envName, portValue.ToString());
             portIndex++;
         }
 
         // Add convenience port variable
-        env["GAME_PORT"] = port.ToString();
-        env["SERVER_PORT"] = port.ToString();
+        SetLiteral("GAME_PORT", port.ToString());
+        SetLiteral("SERVER_PORT", port.ToString());
 
         // Add built-in variables
-        env["SERVER_MEMORY"] = "4096"; // Will be overridden by user values
-        env["TZ"] = "UTC";
+        SetLiteral("SERVER_MEMORY", "4096"); // Will be overridden by user values
+        SetLiteral("TZ", "UTC");
 
         // Process cartridge variables with defaults
         foreach (var variable in cartridge.Variables)
         {
             var envName = variable.EnvVariable;
+            if (forRestore && variable.FreshInstallOnly)
+            {
+                env.Remove(envName);
+                templates.Remove(envName);
+                continue;
+            }
             
             // Check if user provided a value (try by Id first, then by EnvVariable since frontend sends values keyed by EnvVariable)
             if ((userValues.TryGetValue(variable.Id, out var userValue) || userValues.TryGetValue(variable.EnvVariable, out userValue)) && userValue != null)
             {
-                env[envName] = ConvertValueToString(userValue, variable.Type);
+                SetLiteral(envName, ConvertValueToString(userValue, variable.Type));
             }
             else if (variable.Default != null)
             {
-                env[envName] = ConvertValueToString(variable.Default, variable.Type);
+                SetLiteral(envName, ConvertValueToString(variable.Default, variable.Type));
             }
         }
 
-        // Process variable substitution in system variables
-        foreach (var key in env.Keys.ToList())
+        // Explicit migration bindings are authoritative over cartridge defaults and user-defined variables.
+        if (namedPorts is not null)
+            foreach (var (name, mappedPort) in namedPorts)
+                SetLiteral(name.ToUpperInvariant() + "_PORT", mappedPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        // Expand only templates from the trusted cartridge, keeping imported and supplied values literal.
+        foreach (var key in templates)
         {
             env[key] = SubstituteVariables(env[key], env);
         }
@@ -284,7 +300,7 @@ public class CartridgeService : ICartridgeService
                 int i => i.ToString(),
                 long l => l.ToString(),
                 double d => ((int)d).ToString(),
-                JsonElement je when je.ValueKind == JsonValueKind.Number => je.GetInt32().ToString(),
+                JsonElement je when je.ValueKind == JsonValueKind.Number => je.ToString(),
                 _ => value.ToString() ?? "0"
             },
             _ => value switch
@@ -295,16 +311,43 @@ public class CartridgeService : ICartridgeService
         };
     }
 
-    public (bool IsValid, List<string> Errors) ValidateVariables(Cartridge cartridge, Dictionary<string, object> values)
+    public (bool IsValid, List<string> Errors) ValidateVariables(Cartridge cartridge, Dictionary<string, object> values, bool forRestore = false)
     {
         var errors = new List<string>();
+        if (values.Count > 100)
+        {
+            DiagnosticLog.Write(_logger, DiagnosticPoints.CartridgeVariables);
+            return (false, new List<string> { "Too many cartridge variables." });
+        }
+        var allowed = cartridge.Variables.SelectMany(variable => new[] { variable.Id, variable.EnvVariable }).ToHashSet(StringComparer.Ordinal);
+        if (values.Keys.Any(key => !allowed.Contains(key)))
+        {
+            DiagnosticLog.Write(_logger, DiagnosticPoints.CartridgeVariables);
+            return (false, new List<string> { "Unknown cartridge variable." });
+        }
 
         foreach (var variable in cartridge.Variables)
         {
+            if (forRestore && variable.FreshInstallOnly) continue;
             // Try to get value by Id first, then by EnvVariable (frontend sends values keyed by EnvVariable)
             var hasValue = (values.TryGetValue(variable.Id, out var value) || values.TryGetValue(variable.EnvVariable, out value)) && value != null;
+            if (!hasValue && variable.Default is not null) { value = variable.Default; hasValue = true; }
             var stringValue = hasValue ? ConvertValueToString(value!, variable.Type) : null;
 
+            if (hasValue && !variable.UserEditable && stringValue != (variable.Default is null ? null : ConvertValueToString(variable.Default, variable.Type)))
+            {
+                errors.Add($"{variable.Name} is not editable");
+                continue;
+            }
+            if (stringValue?.Length > 4096 || stringValue?.Any(c => c is '\0' or '\r' or '\n') == true)
+            {
+                errors.Add($"{variable.Name} is too long or contains control characters");
+                continue;
+            }
+            if (hasValue && variable.Type == "integer" && !int.TryParse(stringValue, out _))
+                errors.Add($"{variable.Name} must be an integer");
+            if (hasValue && variable.Type == "boolean" && stringValue is not "true" and not "false")
+                errors.Add($"{variable.Name} must be a boolean");
             // Check required
             if (variable.Required && (!hasValue || string.IsNullOrEmpty(stringValue)))
             {
@@ -351,15 +394,15 @@ public class CartridgeService : ICartridgeService
                 {
                     try
                     {
-                        if (!Regex.IsMatch(stringValue, validation.Pattern))
+                        if (!Regex.IsMatch(stringValue, validation.Pattern, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)))
                         {
                             errors.Add($"{variable.Name} has an invalid format");
                         }
                     }
-                    catch (RegexParseException)
+                    catch (Exception ex) when (ex is RegexParseException or RegexMatchTimeoutException)
                     {
-                        _logger.LogWarning("Invalid regex pattern for variable {Variable}: {Pattern}",
-                            variable.Id, validation.Pattern);
+                        DiagnosticLog.Write(_logger, DiagnosticPoints.CartridgeVariables, ex);
+                        errors.Add($"{variable.Name} validation could not be completed");
                     }
                 }
             }
@@ -375,6 +418,7 @@ public class CartridgeService : ICartridgeService
             }
         }
 
+        if (errors.Count > 0) DiagnosticLog.Write(_logger, DiagnosticPoints.CartridgeVariables);
         return (errors.Count == 0, errors);
     }
 

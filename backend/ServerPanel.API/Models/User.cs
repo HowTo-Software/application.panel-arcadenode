@@ -29,6 +29,9 @@ public class User
 
     public bool IsActive { get; set; } = true;
 
+    [MaxLength(32)]
+    public string SecurityStamp { get; set; } = Guid.NewGuid().ToString("N");
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime? LastLoginAt { get; set; }
@@ -36,6 +39,8 @@ public class User
     public int FailedLoginAttempts { get; set; } = 0;
 
     public DateTime? LockoutEnd { get; set; }
+    public string? ProtectedTotpSecret { get; set; }
+    public long? LastTotpStep { get; set; }
 
     // Navigation properties
     public ICollection<GameServer> Servers { get; set; } = new List<GameServer>();

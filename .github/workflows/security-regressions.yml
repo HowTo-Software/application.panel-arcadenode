@@ -1,0 +1,249 @@
+name: Security regressions
+on:
+  push:
+    branches: [main, 'ci/official-games/bedrock/**', 'ci/official-games/java/**', 'ci/official-games/zomboid/**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      official_bedrock:
+        description: Restore a save with the official Linux Bedrock server
+        type: boolean
+        default: false
+      official_java:
+        description: Restore a save with the official Minecraft Java server on Linux
+        type: boolean
+        default: false
+      official_zomboid:
+        description: Restore a world and player accounts with the official Linux Project Zomboid server
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Restore and reject known NuGet advisories
+        run: dotnet restore scripts/security-probes/SecurityProbes.csproj -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=low -warnaserror
+      - name: Build with warnings as errors
+        run: dotnet build scripts/security-probes/SecurityProbes.csproj --no-restore -warnaserror
+      - name: Build the Linux quota driver
+        run: dotnet build backend/ArcadeNode.Quota/ArcadeNode.Quota.csproj -warnaserror
+      - name: HTTP, database and mTLS regressions against synthetic nodes
+        run: dotnet run --project scripts/security-probes/SecurityProbes.csproj --no-build --no-launch-profile
+      - name: Check migration snapshot
+        run: |
+          dotnet tool restore
+          dotnet ef migrations has-pending-model-changes --project backend/ServerPanel.API/ServerPanel.API.csproj
+      - name: Apply the migration chain and check cross-connection locks on SQL Server
+        shell: bash
+        run: bash scripts/security-probes/sqlserver-container-smoke.sh
+      - name: Export Pterodactyl accounts from a disposable MariaDB database
+        shell: bash
+        run: |
+          if ! php -r 'exit(extension_loaded("pdo_mysql") ? 0 : 1);'; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq php-mysql
+          fi
+          bash scripts/security-probes/pterodactyl-inventory-smoke.sh
+      - run: npm ci
+        working-directory: frontend
+      - run: npm audit --audit-level=low
+        working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - name: Validate hardened Compose configuration
+        shell: bash
+        env:
+          PANEL_HOST: panel.example.test
+          DATABASE_CONNECTION_FILE: /tmp/arcadenode-ci-placeholder
+          MIGRATION_CONNECTION_FILE: /tmp/arcadenode-ci-placeholder
+          JWT_KEY_FILE: /tmp/arcadenode-ci-placeholder
+          ADMIN_PASSWORD_FILE: /tmp/arcadenode-ci-placeholder
+          TLS_CERTIFICATE_FILE: /tmp/arcadenode-ci-placeholder
+          TLS_PRIVATE_KEY_FILE: /tmp/arcadenode-ci-placeholder
+          NODE_CONFIG_FILE: /tmp/arcadenode-ci-placeholder
+          NODE_CERTS_DIR: /tmp
+        run: |
+          touch /tmp/arcadenode-ci-placeholder
+          docker compose config --quiet
+          docker compose -f game-servers/docker-compose.yml --profile image-build config --quiet
+      - name: Validate shell syntax
+        shell: bash
+        run: find scripts game-servers -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+      - name: Build production images and check Nginx as its runtime UID
+        shell: bash
+        run: |
+          docker build -t arcadenode-api-check ./backend
+          key_volume="$(docker volume create)"
+          trap 'docker volume rm "$key_volume" >/dev/null' EXIT
+          docker run --rm --read-only --network none --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=volume,source=$key_volume,target=/var/lib/arcadenode/keys" --entrypoint /bin/sh arcadenode-api-check -ec \
+            'test "$(id -u)" -ne 0; test "$(stat -c %a /var/lib/arcadenode/keys)" = 700; printf "%s" one > /var/lib/arcadenode/keys/probe'
+          docker run --rm --read-only --network none --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=volume,source=$key_volume,target=/var/lib/arcadenode/keys" --entrypoint /bin/sh arcadenode-api-check -ec \
+            'test "$(cat /var/lib/arcadenode/keys/probe)" = one'
+          docker build -t arcadenode-ui-check ./frontend
+          mkdir -p "$RUNNER_TEMP/arcadenode-tls"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=panel.example.test -keyout "$RUNNER_TEMP/arcadenode-tls/tls_private_key" -out "$RUNNER_TEMP/arcadenode-tls/tls_certificate"
+          chmod 644 "$RUNNER_TEMP/arcadenode-tls/"*
+          docker run --rm --read-only --network none --add-host backend:127.0.0.1 --tmpfs /tmp:size=32m -v "$RUNNER_TEMP/arcadenode-tls:/run/secrets:ro" --entrypoint nginx arcadenode-ui-check -t
+      - name: Build and exercise the Linux file node in Docker
+        shell: bash
+        run: |
+          docker build -t arcadenode-files-check ./backend/ArcadeNode.Node
+          bash scripts/security-probes/node-container-smoke.sh arcadenode-files-check
+      - name: Enforce XFS project quotas on Docker volumes
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xfsprogs
+          sudo test ! -e /srv/arcadenode-quota
+          sudo test ! -e /opt/arcadenode-quota
+          quota_image="$(mktemp "$RUNNER_TEMP/arcadenode-quota.XXXXXX")"
+          cleanup_quota() {
+            sudo systemctl stop arcadenode-quota.service || true
+            if mountpoint -q /srv/arcadenode-quota; then sudo umount /srv/arcadenode-quota || true; fi
+            rm -f -- "$quota_image"
+          }
+          trap cleanup_quota EXIT
+          truncate -s 512M "$quota_image"
+          mkfs.xfs -f "$quota_image"
+          sudo mkdir /srv/arcadenode-quota
+          sudo mount -o loop,prjquota "$quota_image" /srv/arcadenode-quota
+          dotnet publish backend/ArcadeNode.Quota/ArcadeNode.Quota.csproj -c Release -r linux-x64 --self-contained true -o "$RUNNER_TEMP/quota-release" -warnaserror
+          sudo cp -R "$RUNNER_TEMP/quota-release" /opt/arcadenode-quota
+          sudo install -D -m 0644 deploy/quota/arcadenode-quota.service /etc/systemd/system/arcadenode-quota.service
+          sudo install -D -m 0644 deploy/quota/arcadenode-quota.spec /etc/docker/plugins/arcadenode-quota.spec
+          sudo systemctl daemon-reload
+          if ! sudo systemctl start arcadenode-quota.service ||
+             ! bash scripts/security-probes/quota-plugin-smoke.sh ||
+             ! bash scripts/security-probes/managed-volumes-smoke.sh arcadenode-files-check; then
+            sudo journalctl -u arcadenode-quota.service --no-pager -n 70
+            exit 1
+          fi
+      - name: Check Arma Reforger configuration rendering
+        shell: bash
+        env:
+          SERVER_PORT: '25001'
+          A2S_PORT: '25002'
+          SERVER_NAME: 'Arcade "Reforger" \ World'
+          ADMIN_PASSWORD: 'Synthetic"Password\Only'
+          SCENARIO_ID: '{ECC61978EDCC2B5A}Missions/23_Campaign.conf'
+          MAX_PLAYERS: '64'
+          VISIBLE: 'true'
+          CROSSPLATFORM: 'false'
+          BATTLYE: 'true'
+          DISABLE_THIRD_PERSON: 'true'
+          SERVER_MAX_VIEW_DISTANCE: '2500'
+          SERVER_MIN_GRASS_DISTANCE: '50'
+          NETWORK_VIEW_DISTANCE: '1500'
+          MODS: '59727DAE364DEADB, 59727DAE32981C7D'
+        run: |
+          config="$(jq -en -f game-servers/arma-reforger/config.jq)"
+          jq -e --arg name "$SERVER_NAME" --arg password "$ADMIN_PASSWORD" --arg scenario "$SCENARIO_ID" '
+            .bindPort == 25001 and .publicPort == 25001 and .a2s.port == 25002 and
+            .game.name == $name and .game.passwordAdmin == $password and .game.scenarioId == $scenario and
+            .game.crossPlatform == false and .game.gameProperties.disableThirdPerson == true and
+            (.game.mods | map(.modId)) == ["59727DAE364DEADB", "59727DAE32981C7D"]
+          ' <<< "$config" >/dev/null
+          if A2S_PORT="$SERVER_PORT" jq -en -f game-servers/arma-reforger/config.jq >/dev/null 2>&1; then
+            echo 'Arma configuration accepted the same port for the game and A2S.' >&2
+            exit 1
+          fi
+          bash scripts/security-probes/reforger-restore-smoke.sh
+      - name: Check the Minecraft Java runtimes and installers
+        shell: bash
+        run: |
+          bash scripts/security-probes/vanilla-download-smoke.sh
+          bash scripts/security-probes/paper-download-smoke.sh
+          docker build -t arcadenode-minecraft-check ./game-servers/minecraft
+          docker run --rm --read-only --network none --entrypoint /bin/bash arcadenode-minecraft-check -ec '
+            java -version 2>&1 | grep -F "\"21."
+            /opt/java/java25/bin/java -version 2>&1 | grep -F "\"25."
+            test -x /usr/local/bin/arcadenode-download-vanilla
+            test -x /usr/local/bin/arcadenode-download-paper
+          '
+          bash scripts/security-probes/minecraft-memory-smoke.sh arcadenode-minecraft-check
+      - name: Check Project Zomboid restore layouts and launcher memory
+        shell: bash
+        run: bash scripts/security-probes/zomboid-restore-smoke.sh
+      - name: Check Bedrock release selection and update persistence
+        shell: bash
+        run: |
+          bash scripts/security-probes/bedrock-install-smoke.sh
+          bash scripts/security-probes/bedrock-restore-smoke.sh
+  official-bedrock:
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.official_bedrock) ||
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/ci/official-games/bedrock/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build the managed Bedrock image
+        run: docker build -t arcadenode-bedrock-check ./game-servers/minecraft-bedrock
+      - name: Preserve a saved scoreboard through a Linux cutover
+        shell: bash
+        run: bash scripts/security-probes/bedrock-cutover-smoke.sh arcadenode-bedrock-check
+  official-java:
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.official_java) ||
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/ci/official-games/java/')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build the managed Minecraft Java image
+        run: docker build -t arcadenode-minecraft-check ./game-servers/minecraft
+      - name: Preserve a saved scoreboard through a Linux cutover
+        shell: bash
+        run: bash scripts/security-probes/minecraft-java-cutover-smoke.sh arcadenode-minecraft-check
+  official-zomboid:
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.official_zomboid) ||
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/ci/official-games/zomboid/')) }}
+    # The ubuntu-latest image currently ships Docker 29.4.2, which blocks 32-bit SteamCMD networking.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Install tools for the disposable game volume
+        run: |
+          docker version --format '{{.Server.Version}}'
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq rsync sqlite3 xfsprogs
+      - name: Build the managed Project Zomboid image
+        run: docker build -t arcadenode-zomboid-check ./game-servers/project-zomboid
+      - name: Preserve the world and player accounts through a Linux cutover
+        shell: bash
+        run: bash scripts/security-probes/zomboid-cutover-smoke.sh arcadenode-zomboid-check

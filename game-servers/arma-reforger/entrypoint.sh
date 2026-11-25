@@ -1,91 +1,94 @@
 #!/bin/bash
 set -e
-
-SERVER_DIR="/home/reforger/server"
-DATA_DIR="/home/reforger/data"
+umask 027
+REFORGER_HOME="/home/reforger"
+SERVER_DIR="${REFORGER_HOME}/server"
+DATA_DIR="${REFORGER_HOME}/data"
 STEAMCMD="/usr/games/steamcmd"
 
 echo "=========================================="
 echo "  ArcadeNode - Arma Reforger Server"
 echo "=========================================="
 
-# Install/Update Arma Reforger Dedicated Server
-echo "[INFO] Checking for server updates..."
-${STEAMCMD} +login anonymous \
-    +force_install_dir ${SERVER_DIR} \
-    +app_update ${STEAM_APP_ID} validate \
-    +quit
+if [ "${ARCADENODE_RESTORED_VOLUME:-false}" = "true" ]; then
+    restored_config="${DATA_DIR}/configs/server.json"
+    restored_profile="${DATA_DIR}/profile"
+    restored_addons="${DATA_DIR}/addons"
+    startup_args=(-addonsDir "${restored_addons}" -logLevel normal -logStats 60000)
 
-# Create data directories
-mkdir -p "${DATA_DIR}/profile"
-mkdir -p "${DATA_DIR}/addons"
-mkdir -p "${DATA_DIR}/configs"
-mkdir -p "${DATA_DIR}/logs"
+    if [ -x "${REFORGER_HOME}/ArmaReforgerServer" ] || [ -L "${REFORGER_HOME}/ArmaReforgerServer" ]; then
+        SERVER_DIR="${REFORGER_HOME}"
+        restored_config="${REFORGER_HOME}/config.json"
+        restored_profile="${REFORGER_HOME}/profile"
+        restored_addons="${REFORGER_HOME}/addons"
+        game_project="${restored_addons}/data/ArmaReforger.gproj"
+        if [ -L "${restored_addons}/data" ] || [ ! -f "${game_project}" ] || [ -L "${game_project}" ]; then
+            echo "[ERROR] Restore requires the installed Pterodactyl game project." >&2
+            exit 1
+        fi
+        if [ -L "${REFORGER_HOME}/tmp" ]; then
+            echo "[ERROR] Restore requires a regular temporary addon directory." >&2
+            exit 1
+        fi
+        startup_args=(-gproj "${game_project}" -backendlog -nothrow -listScenarios
+            -addonTempDir "${REFORGER_HOME}/tmp")
+    fi
 
-# Generate server configuration
-CONFIG_FILE="${DATA_DIR}/configs/server.json"
-echo "[INFO] Generating server configuration..."
-
-# Parse MODS environment variable into JSON array
-MODS_JSON="[]"
-if [ -n "${MODS}" ]; then
-    MODS_JSON=$(echo "${MODS}" | jq -R 'split(",") | map({modId: ., name: "", version: ""})')
+    if [ ! -f "${SERVER_DIR}/ArmaReforgerServer" ] || [ ! -x "${SERVER_DIR}/ArmaReforgerServer" ] ||
+        [ -L "${SERVER_DIR}/ArmaReforgerServer" ] || [ ! -f "${restored_config}" ] || [ -L "${restored_config}" ] ||
+        [ ! -d "${restored_profile}" ] || [ -L "${restored_profile}" ] ||
+        [ ! -d "${restored_addons}" ] || [ -L "${restored_addons}" ]; then
+        echo "[ERROR] Restore requires the existing executable, configuration, profile and addons." >&2
+        exit 1
+    fi
+    if ! jq -e --argjson primary "${SERVER_PORT}" --arg published "${ARCADENODE_PUBLISHED_PORTS}" '
+        def strong: type == "string" and length >= 16;
+        def valid_bind: . == "" or . == "0.0.0.0";
+        ($published | split(",") | map(tonumber)) as $allowed |
+        (.bindPort // .gameHostBindPort // .publicPort // .gameHostRegisterPort // 2001) as $bind |
+        (.publicPort // .gameHostRegisterPort // $bind) as $public |
+        (.game.passwordAdmin // .adminPassword // "") as $admin |
+        (.a2s.port // (if .a2sQueryEnabled == true then (.steamQueryPort // 17777) else null end)) as $query |
+        (.rcon.port // (if .rcon != null then 19999 else null end)) as $rcon |
+        ($bind == $primary and $public == $primary) and
+        ((.bindAddress // .gameHostBindAddress // "") | valid_bind) and
+        ($admin == "" or ($admin | strong)) and
+        ($query == null or ($query != $primary and ($allowed | index($query) != null) and ((.a2s.address // "") | valid_bind))) and
+        ($rcon == null or ($rcon != $primary and $rcon != $query and ($allowed | index($rcon) != null) and
+            ((.rcon.address // "") | valid_bind) and (.rcon.password | strong)))
+    ' "${restored_config}" >/dev/null 2>&1; then
+        echo "[ERROR] Restored Reforger listener or credential configuration needs review." >&2
+        exit 1
+    fi
+    if [ "${SERVER_DIR}" = "${REFORGER_HOME}" ]; then
+        mkdir -p "${REFORGER_HOME}/tmp"
+    fi
+    cd "${SERVER_DIR}"
+    exec ./ArmaReforgerServer -config "${restored_config}" -profile "${restored_profile}" "${startup_args[@]}"
 fi
 
-# Create the config file
-cat > "${CONFIG_FILE}" << EOF
-{
-    "dedicatedServerId": "",
-    "region": "EU",
-    "gameHostBindAddress": "0.0.0.0",
-    "gameHostBindPort": ${GAME_PORT},
-    "gameHostRegisterBindAddress": "",
-    "gameHostRegisterPort": ${GAME_PORT},
-    "adminPassword": "${ADMIN_PASSWORD}",
-    "game": {
-        "name": "${SERVER_NAME}",
-        "password": "${SERVER_PASSWORD}",
-        "passwordAdmin": "${ADMIN_PASSWORD}",
-        "admins": [],
-        "scenarioId": ${SCENARIO_ID},
-        "maxPlayers": ${MAX_PLAYERS},
-        "visible": ${VISIBLE},
-        "crossPlatform": ${CROSSPLATFORM},
-        "supportedPlatforms": [
-            "PLATFORM_PC",
-            "PLATFORM_XBL"
-        ],
-        "gameProperties": {
-            "serverMaxViewDistance": ${SERVER_MAX_VIEW_DISTANCE},
-            "serverMinGrassDistance": ${SERVER_MIN_GRASS_DISTANCE},
-            "networkViewDistance": ${NETWORK_VIEW_DISTANCE},
-            "disableThirdPerson": false,
-            "fastValidation": true,
-            "battlEye": ${BATTLYE},
-            "VONDisableUI": false,
-            "VONDisableDirectSpeechUI": false,
-            "missionHeader": {
-                "m_iPlayerCount": ${MAX_PLAYERS},
-                "m_eEditableGameFlags": 6,
-                "m_eDefaultGameFlags": 6
-            }
-        },
-        "mods": ${MODS_JSON}
-    },
-    "a2s": {
-        "address": "0.0.0.0",
-        "port": ${A2S_PORT}
-    },
-    "rpiServer": {
-        "bindAddress": "0.0.0.0",
-        "bindPort": 2002
-    },
-    "operating": {
-        "lobbyPlayerSynchronise": true,
-        "disableCrashReporter": false
-    }
-}
-EOF
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+if [ "${#ADMIN_PASSWORD}" -lt 16 ] || [[ "${ADMIN_PASSWORD}" == *[[:space:]]* ]]; then
+    echo "[ERROR] ADMIN_PASSWORD must have at least 16 characters and no whitespace." >&2
+    exit 1
+fi
+export ADMIN_PASSWORD
+export GAME_PORT="${SERVER_PORT:-${GAME_PORT}}"
+
+mkdir -p "${DATA_DIR}/profile" "${DATA_DIR}/addons" "${DATA_DIR}/configs" "${DATA_DIR}/logs"
+
+CONFIG_FILE="${DATA_DIR}/configs/server.json"
+temporary_config="$(mktemp "${DATA_DIR}/configs/.server.json.XXXXXX")"
+trap 'rm -f -- "$temporary_config"' EXIT
+jq -en -f /usr/local/share/arcadenode/reforger-config.jq > "$temporary_config"
+mv -fT -- "$temporary_config" "$CONFIG_FILE"
+trap - EXIT
+
+echo "[INFO] Checking for server updates..."
+"${STEAMCMD}" +force_install_dir "${SERVER_DIR}" \
+    +login anonymous \
+    +app_update "${STEAM_APP_ID}" validate \
+    +quit
 
 echo "[INFO] Starting Arma Reforger Server..."
 echo "[INFO] Server Name: ${SERVER_NAME}"
@@ -95,7 +98,7 @@ echo "[INFO] Query Port: ${A2S_PORT}/udp"
 echo "[INFO] BattlEye: ${BATTLYE}"
 echo "[INFO] Cross Platform: ${CROSSPLATFORM}"
 
-cd ${SERVER_DIR}
+cd "${SERVER_DIR}"
 
 # Start the server
 exec ./ArmaReforgerServer \

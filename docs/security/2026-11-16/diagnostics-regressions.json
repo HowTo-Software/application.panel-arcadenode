@@ -1,0 +1,159 @@
+{
+  "date": "2026-11-16",
+  "mode": "secure-regression",
+  "passed": 30,
+  "tests": [
+    {
+      "name": "Anonymous requests cannot access servers",
+      "passed": true
+    },
+    {
+      "name": "Foreign server and deployment status both return 403",
+      "passed": true
+    },
+    {
+      "name": "Owners can edit identification but cannot change resources or executable startup",
+      "passed": true
+    },
+    {
+      "name": "Cartridge creation rejects invalid limits before provisioning",
+      "passed": true
+    },
+    {
+      "name": "Memory uses exact 64-bit limits; CPU, pids and root filesystem are constrained",
+      "passed": true
+    },
+    {
+      "name": "Unenrolled, plaintext, credential-bearing and path-bearing Docker origins are rejected",
+      "passed": true
+    },
+    {
+      "name": "Enrolled node is reachable with mutual TLS",
+      "passed": true
+    },
+    {
+      "name": "Mutual TLS rejects missing client credentials, wrong CAs and wrong hostnames",
+      "passed": true
+    },
+    {
+      "name": "Timed-out TLS handshakes close the underlying connection",
+      "passed": true
+    },
+    {
+      "name": "Images require exact approval and data quotas fail closed",
+      "passed": true
+    },
+    {
+      "name": "Provisioning sends finite memory and a quota-controlled home volume",
+      "passed": true
+    },
+    {
+      "name": "Power requests use the server's own node",
+      "passed": true
+    },
+    {
+      "name": "Legacy images fail before any volume or container is created",
+      "passed": true
+    },
+    {
+      "name": "All creation flows enforce finite node capacity and reserve ports",
+      "passed": true
+    },
+    {
+      "name": "Console sends stdin only; no Docker exec or shell is used",
+      "passed": true
+    },
+    {
+      "name": "Container ownership labels are checked before operations",
+      "passed": true
+    },
+    {
+      "name": "Logs reject unlimited tails and enforce a byte ceiling",
+      "passed": true
+    },
+    {
+      "name": "Pagination is mandatory and allocation batches are bounded",
+      "passed": true
+    },
+    {
+      "name": "Suspension defeats an in-flight power action and stale status write",
+      "passed": true
+    },
+    {
+      "name": "Reservation concurrency tokens prevent stale capacity writes",
+      "passed": true
+    },
+    {
+      "name": "An invitation with one use creates at most one account",
+      "passed": true
+    },
+    {
+      "name": "Authentication needs no ambient cookies or stale antiforgery token",
+      "passed": true
+    },
+    {
+      "name": "Invite creation is bounded, expires by default and revocation defeats a stale consumer",
+      "passed": true
+    },
+    {
+      "name": "Expired sessions and tampered JWTs are rejected",
+      "passed": true
+    },
+    {
+      "name": "Diagnostics correlate failed requests without logging credentials",
+      "passed": true
+    },
+    {
+      "name": "A failed Docker stage keeps its precise diagnostic code and redacts daemon details",
+      "passed": true
+    },
+    {
+      "name": "Changing a password revokes the old JWT immediately",
+      "passed": true
+    },
+    {
+      "name": "Logout revokes the current session on the server",
+      "passed": true
+    },
+    {
+      "name": "Inactive accounts and changed roles invalidate signed tokens",
+      "passed": true
+    },
+    {
+      "name": "Authentication limits are per IP and ignore spoofed forwarding headers",
+      "passed": true
+    }
+  ],
+  "diagnosticSamples": [
+    {
+      "Code": "AN0201",
+      "Text": "[AN0201] Sistema não validou o login / System did not validate the login. Source=AuthController.cs:36 Member=Login ServerId=(null) NodeId=(null) ErrorType=(null) RootErrorType=(null) SqlNumber=(null) DockerStatus=(null) SocketError=(null)",
+      "Scope": "SpanId:334bd62c479a38c5, TraceId:e8f180c600e384be6431635af59af973, ParentId:0000000000000000 RequestPath:/api/auth/login RequestId:0HNQ4AJK7Q08C TraceId=0HNQ4AJK7Q08C ServerPanel.API.Controllers.AuthController.Login (ServerPanel.API)",
+      "HasException": false
+    },
+    {
+      "Code": "AN0201",
+      "Text": "[AN0201] Requisição falhou / Request failed. Status=401 Route=api/Auth/login ElapsedMs=6",
+      "Scope": "SpanId:334bd62c479a38c5, TraceId:e8f180c600e384be6431635af59af973, ParentId:0000000000000000 RequestPath:/api/auth/login RequestId:0HNQ4AJK7Q08C TraceId=0HNQ4AJK7Q08C",
+      "HasException": false
+    },
+    {
+      "Code": "AN0502",
+      "Text": "[AN0502] Caiu aqui: criação ou validação do volume com quota / Failed here: quota volume creation or validation. Source=DockerService.cs:35 Member=CreateContainerAsyncCore ServerId=fc8fa9ce-230e-45cb-b714-e4f8239a9649 NodeId=5c5a31ca-ba79-472f-bde3-f6c2526456f3 ErrorType=DockerApiException RootErrorType=DockerApiException SqlNumber=(null) DockerStatus=InternalServerError SocketError=(null)",
+      "Scope": "SpanId:a337509ca7c16285, TraceId:1e80e9afc37f1f1d76d5af878209dff2, ParentId:0000000000000000 RequestPath:/api/servers RequestId:0HNQ4AJK7Q08E TraceId=0HNQ4AJK7Q08E ServerPanel.API.Controllers.ServersController.CreateServer (ServerPanel.API)",
+      "HasException": false
+    },
+    {
+      "Code": "AN0502",
+      "Text": "[AN0502] Caiu aqui: criação ou validação do volume com quota / Failed here: quota volume creation or validation. Source=DockerService.cs:18 Member=CreateContainerAsync ServerId=fc8fa9ce-230e-45cb-b714-e4f8239a9649 NodeId=5c5a31ca-ba79-472f-bde3-f6c2526456f3 ErrorType=DockerApiException RootErrorType=DockerApiException SqlNumber=(null) DockerStatus=InternalServerError SocketError=(null)",
+      "Scope": "SpanId:a337509ca7c16285, TraceId:1e80e9afc37f1f1d76d5af878209dff2, ParentId:0000000000000000 RequestPath:/api/servers RequestId:0HNQ4AJK7Q08E TraceId=0HNQ4AJK7Q08E ServerPanel.API.Controllers.ServersController.CreateServer (ServerPanel.API)",
+      "HasException": false
+    },
+    {
+      "Code": "AN0502",
+      "Text": "[AN0502] Caiu aqui: criação ou validação do volume com quota / Failed here: quota volume creation or validation. Source=ServerService.cs:130 Member=CreateServerAsync ServerId=fc8fa9ce-230e-45cb-b714-e4f8239a9649 NodeId=5c5a31ca-ba79-472f-bde3-f6c2526456f3 ErrorType=DockerApiException RootErrorType=DockerApiException SqlNumber=(null) DockerStatus=InternalServerError SocketError=(null)",
+      "Scope": "SpanId:a337509ca7c16285, TraceId:1e80e9afc37f1f1d76d5af878209dff2, ParentId:0000000000000000 RequestPath:/api/servers RequestId:0HNQ4AJK7Q08E TraceId=0HNQ4AJK7Q08E ServerPanel.API.Controllers.ServersController.CreateServer (ServerPanel.API)",
+      "HasException": false
+    }
+  ]
+}

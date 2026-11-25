@@ -2,7 +2,7 @@
 # Makefile for building game server cartridge images
 
 # Configuration
-VERSION ?= latest
+VERSION ?= secure
 REGISTRY ?=
 PUSH ?= false
 
@@ -102,7 +102,7 @@ help:
 	@echo "  help             Show this help message"
 	@echo ""
 	@echo "Variables:"
-	@echo "  VERSION          Image version tag (default: latest)"
+	@echo "  VERSION          Image version tag (default: secure)"
 	@echo "  REGISTRY         Registry URL for pushing (optional)"
 	@echo ""
 	@echo "Examples:"

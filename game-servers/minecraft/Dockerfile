@@ -1,20 +1,23 @@
 # Minecraft Server (Paper/Vanilla)
 # ArcadeNode Game Server Cartridge
 
+FROM eclipse-temurin:25-jre-alpine AS java25
 FROM eclipse-temurin:21-jre-alpine
 
 LABEL maintainer="ArcadeNode"
 LABEL game="Minecraft"
-LABEL version="1.0"
+LABEL version="2.0"
+LABEL arcadenode.managed="2"
+LABEL arcadenode.restore="1"
 
 # Environment variables
 ENV SERVER_TYPE=paper
 ENV MC_VERSION=1.21.1
+ENV JAVA_RUNTIME=auto
 ENV PAPER_BUILD=latest
 ENV SERVER_NAME="ArcadeNode MC Server"
 ENV SERVER_PORT=25565
 ENV RCON_PORT=25575
-ENV RCON_PASSWORD="changeme"
 ENV MAX_PLAYERS=20
 ENV MOTD="ArcadeNode Minecraft Server"
 ENV DIFFICULTY=normal
@@ -38,7 +41,7 @@ ENV SPAWN_ANIMALS=true
 ENV SPAWN_MONSTERS=true
 ENV SPAWN_NPCS=true
 ENV GENERATE_STRUCTURES=true
-ENV ENABLE_RCON=true
+ENV ENABLE_RCON=false
 ENV ENABLE_QUERY=true
 ENV ENABLE_COMMAND_BLOCK=false
 ENV OPS=""
@@ -53,20 +56,23 @@ RUN apk add --no-cache \
     wget
 
 # Create server user and directories
-RUN adduser -D -h /home/minecraft minecraft \
+RUN addgroup -g 10001 minecraft \
+    && adduser -D -u 10001 -G minecraft -h /home/minecraft minecraft \
     && mkdir -p /home/minecraft/server \
     && mkdir -p /home/minecraft/data \
     && mkdir -p /home/minecraft/plugins \
     && chown -R minecraft:minecraft /home/minecraft
 
 # Switch to server user
-USER minecraft
 WORKDIR /home/minecraft
 
 # Copy configuration files
-COPY --chown=minecraft:minecraft entrypoint.sh /home/minecraft/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/arcadenode-entrypoint
+COPY download-vanilla.sh /usr/local/bin/arcadenode-download-vanilla
+COPY download-paper.sh /usr/local/bin/arcadenode-download-paper
+COPY --from=java25 /opt/java/openjdk/ /opt/java/java25/
 COPY --chown=minecraft:minecraft server.properties.template /home/minecraft/server.properties.template
-RUN chmod +x /home/minecraft/entrypoint.sh
+RUN chmod 0555 /usr/local/bin/arcadenode-entrypoint /usr/local/bin/arcadenode-download-vanilla /usr/local/bin/arcadenode-download-paper
 
 # Expose ports
 # Game port (TCP/UDP)
@@ -78,11 +84,10 @@ EXPOSE 25575/tcp
 EXPOSE 25565/udp
 
 # Volumes for persistence
-VOLUME ["/home/minecraft/data"]
-VOLUME ["/home/minecraft/plugins"]
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD echo "list" | nc -q 1 localhost ${RCON_PORT} || exit 1
+    CMD nc -z 127.0.0.1 "${SERVER_PORT}" || exit 1
 
-ENTRYPOINT ["/home/minecraft/entrypoint.sh"]
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/arcadenode-entrypoint"]

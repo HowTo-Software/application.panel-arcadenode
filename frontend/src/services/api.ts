@@ -2,11 +2,18 @@ import api from '@/lib/httpClient'
 import type {
   AuthResponse,
   Server,
+  ServerBackup,
+  ServerMemberships,
+  ServerMigration,
+  MigrationAction,
   ServerStats,
   Node,
   Allocation,
   Egg,
+  EggRuntime,
   Nest,
+  ImportedEgg,
+  NestSummary,
   DashboardStats,
   CreateServerRequest,
   CreateNodeRequest,
@@ -25,8 +32,11 @@ import type {
 
 // Auth
 export const authService = {
-  login: async (username: string, password: string): Promise<AuthResponse> => {
-    const { data } = await api.post<AuthResponse>('/auth/login', { username, password })
+  logout: async (): Promise<void> => {
+    await api.post('/auth/logout')
+  },
+  login: async (username: string, password: string, totpCode?: string): Promise<AuthResponse> => {
+    const { data } = await api.post<AuthResponse>('/auth/login', { username, password, totpCode })
     return data
   },
 
@@ -65,6 +75,17 @@ export const authService = {
 
 // Servers
 export const serverService = {
+  listMembers: async (id: string, signal: AbortSignal): Promise<ServerMemberships> =>
+    (await api.get<ServerMemberships>(`/servers/${id}/members`, { signal })).data,
+
+  setMemberPermissions: async (id: string, userId: string, permissions: string[], operation: 'create' | 'update'): Promise<void> => {
+    await api.put(`/servers/${id}/members/${userId}`, { permissions, operation })
+  },
+
+  removeMember: async (id: string, userId: string): Promise<void> => {
+    await api.delete(`/servers/${id}/members/${userId}`)
+  },
+
   getAll: async (): Promise<Server[]> => {
     const { data } = await api.get<Server[]>('/servers')
     return data
@@ -95,7 +116,8 @@ export const serverService = {
   },
 
   power: async (id: string, action: 'start' | 'stop' | 'restart' | 'kill') => {
-    const { data } = await api.post(`/servers/${id}/power`, { action })
+    const timeout = action === 'stop' || action === 'restart' ? 145_000 : 30_000
+    const { data } = await api.post(`/servers/${id}/power`, { action }, { timeout })
     return data
   },
 
@@ -104,6 +126,84 @@ export const serverService = {
       params: { tail },
     })
     return data
+  },
+
+  downloadFile: async (id: string, path: string): Promise<Blob> => {
+    const { data } = await api.get<Blob>(`/servers/${id}/files/download`, { params: { path }, responseType: 'blob' })
+    return data
+  },
+
+  listFiles: async (id: string, path: string, signal: AbortSignal, cursor: string | null, filter: string) => {
+    const { data } = await api.get<{
+      entries: { name: string; isDirectory: boolean; mode?: string | null }[]
+      truncated: boolean
+      nextCursor?: string | null
+    }>(
+      `/servers/${id}/files`, { params: { path, cursor: cursor ?? undefined, filter: filter || undefined }, signal }
+    )
+    return data
+  },
+
+  getStorageUsage: async (id: string, signal: AbortSignal) =>
+    (await api.get<{ logicalBytes: number; allocatedBytes: number; sampledAt: string }>(
+      `/servers/${id}/storage`, { signal }
+    )).data,
+
+  listBackups: async (id: string, signal: AbortSignal): Promise<ServerBackup[]> =>
+    (await api.get<ServerBackup[]>(`/servers/${id}/backups`, { signal })).data,
+
+  createBackup: async (id: string, name: string, exclusions: string): Promise<ServerBackup> =>
+    (await api.post<ServerBackup>(`/servers/${id}/backups`, { name, exclusions })).data,
+
+  prepareBackupRestore: async (id: string, backupId: string): Promise<ServerBackup> =>
+    (await api.post<ServerBackup>(`/servers/${id}/backups/${backupId}/restore`)).data,
+
+  setBackupProtection: async (id: string, backupId: string, isLocked: boolean) => {
+    await api.put(`/servers/${id}/backups/${backupId}/protection`, { isLocked })
+  },
+
+  deleteBackup: async (id: string, backupId: string) => {
+    await api.delete(`/servers/${id}/backups/${backupId}`)
+  },
+
+  uploadFile: async (id: string, path: string, file: File, signal: AbortSignal,
+    onProgress: (percentage: number) => void): Promise<void> => {
+    await api.post(`/servers/${id}/files/upload`, file, {
+      params: { path }, headers: { 'Content-Type': 'application/octet-stream' }, signal, timeout: 315000,
+      onUploadProgress: ({ loaded }) => onProgress(file.size ? Math.min(100, Math.floor(100 * loaded / file.size)) : 100),
+    })
+  },
+
+  editTextFile: async (id: string, path: string, content: string, sha256: string): Promise<void> => {
+    await api.put(`/servers/${id}/files/text`, { content, sha256 }, { params: { path } })
+  },
+
+  createDirectory: async (id: string, path: string): Promise<void> => {
+    await api.post(`/servers/${id}/files/directories`, { path })
+  },
+
+  moveFile: async (id: string, source: string, destination: string): Promise<void> => {
+    await api.post(`/servers/${id}/files/move`, { source, destination })
+  },
+
+  changeFilePermissions: async (id: string, directory: string, entries: string[], mode: string): Promise<void> => {
+    await api.post(`/servers/${id}/files/chmod`, { directory, entries, mode })
+  },
+
+  copyFile: async (id: string, source: string, destination: string): Promise<void> => {
+    await api.post(`/servers/${id}/files/copy`, { source, destination }, { timeout: 38000 })
+  },
+
+  compressFiles: async (id: string, directory: string, entries: string[], destination: string): Promise<void> => {
+    await api.post(`/servers/${id}/files/compress`, { directory, entries, destination }, { timeout: 38000 })
+  },
+
+  extractArchive: async (id: string, source: string, destination: string): Promise<void> => {
+    await api.post(`/servers/${id}/files/extract`, { source, destination }, { timeout: 38000 })
+  },
+
+  deleteFileEntries: async (id: string, directory: string, entries: string[]): Promise<void> => {
+    await api.post(`/servers/${id}/files/delete`, { directory, entries }, { timeout: 32_000 })
   },
 
   sendCommand: async (id: string, command: string) => {
@@ -123,6 +223,10 @@ export const serverService = {
 
 // Nodes
 export const nodeService = {
+  getCpuCores: async (id: string, signal: AbortSignal): Promise<number[]> => {
+    const { data } = await api.get<number[]>(`/nodes/${id}/cpu-cores`, { signal })
+    return data
+  },
   getAll: async (): Promise<Node[]> => {
     const { data } = await api.get<Node[]>('/nodes')
     return data
@@ -190,6 +294,19 @@ export const nodeService = {
 
 // Admin
 export const adminService = {
+  getMigrations: async (page: number, pageSize: number, query: string, signal: AbortSignal) => {
+    const { data, headers } = await api.get<ServerMigration[]>('/admin/migrations/servers', { params: { page, pageSize, query }, signal })
+    return { items: data, total: Number(headers['x-total-count'] ?? data.length) }
+  },
+
+  submitMigrationReceipt: async (id: string, action: MigrationAction, json: string) => {
+    await api.post(`/admin/migrations/servers/${encodeURIComponent(id)}/${action}`, json, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 38_000,
+    })
+  },
+  getEggRuntime: async (id: string, signal: AbortSignal) =>
+    (await api.get<EggRuntime>(`/admin/egg-catalog/eggs/${id}/runtime`, { signal })).data,
   getDashboardStats: async (): Promise<DashboardStats> => {
     const { data } = await api.get<DashboardStats>('/admin/dashboard')
     return data
@@ -212,6 +329,33 @@ export const adminService = {
   getEggs: async (nestId?: string): Promise<Egg[]> => {
     const url = nestId ? `/admin/nests/${nestId}/eggs` : '/admin/eggs'
     const { data } = await api.get<Egg[]>(url)
+    return data
+  },
+
+  getEggNests: async (page: number, pageSize: number, signal?: AbortSignal) => {
+    const { data, headers } = await api.get<NestSummary[]>('/admin/egg-catalog/nests', { params: { page, pageSize }, signal })
+    return { items: data, total: Number(headers['x-total-count'] ?? data.length) }
+  },
+
+  createNest: async (name: string): Promise<NestSummary> => {
+    const { data } = await api.post<NestSummary>('/admin/egg-catalog/nests', { name })
+    return data
+  },
+
+  getImportedEggs: async (nestId: string, page: number, pageSize: number, signal?: AbortSignal) => {
+    const { data, headers } = await api.get<ImportedEgg[]>(`/admin/egg-catalog/nests/${nestId}/eggs`, { params: { page, pageSize }, signal })
+    return { items: data, total: Number(headers['x-total-count'] ?? data.length) }
+  },
+
+  importEgg: async (nestId: string, manifest: File) => {
+    const { status } = await api.post(`/admin/egg-catalog/nests/${nestId}/eggs/import`, manifest, {
+      headers: { 'Content-Type': 'application/json' },
+    })
+    return status === 201
+  },
+
+  exportEgg: async (id: string): Promise<Blob> => {
+    const { data } = await api.get<Blob>(`/admin/egg-catalog/eggs/${id}/export`, { responseType: 'blob' })
     return data
   },
 
@@ -319,8 +463,9 @@ export const cartridgeService = {
     await api.post('/cartridges/reload')
   },
 
-  createServer: async (request: CreateCartridgeServerRequest): Promise<Server> => {
-    const { data } = await api.post<Server>('/servers/from-cartridge', request)
+  createServer: async (request: CreateCartridgeServerRequest, eggId?: string): Promise<Server> => {
+    const endpoint = eggId ? `/servers/from-egg/${eggId}` : '/servers/from-cartridge'
+    const { data } = await api.post<Server>(endpoint, request)
     return data
   },
 }

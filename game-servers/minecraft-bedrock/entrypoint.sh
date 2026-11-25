@@ -1,112 +1,73 @@
 #!/bin/bash
 set -e
+umask 027
 
-SERVER_DIR="/home/bedrock/server"
-DATA_DIR="/home/bedrock/data"
+BEDROCK_HOME="/home/bedrock"
+SERVER_DIR="${BEDROCK_HOME}/server"
+DATA_DIR="${BEDROCK_HOME}/data"
 
 echo "=========================================="
 echo "  ArcadeNode - Minecraft Bedrock Server"
 echo "=========================================="
+
+if [ "${ARCADENODE_RESTORED_VOLUME:-false}" = "true" ]; then
+    installation="${BEDROCK_HOME}"
+    if [ ! -x "${BEDROCK_HOME}/bedrock_server" ] && [ ! -L "${BEDROCK_HOME}/bedrock_server" ]; then
+        installation="${SERVER_DIR}"
+        if [ -L "${installation}" ]; then
+            echo "[ERROR] Restore requires a regular Bedrock installation directory." >&2
+            exit 1
+        fi
+    fi
+    cd "${installation}"
+    worlds=worlds
+    if [ "${installation}" = "${SERVER_DIR}" ] && [ -L worlds ]; then
+        if [ "$(readlink worlds)" != "../data/worlds" ] || [ -L "${DATA_DIR}" ]; then
+            echo "[ERROR] The managed Bedrock world link must point to its data directory." >&2
+            exit 1
+        fi
+        worlds="${DATA_DIR}/worlds"
+    fi
+    if [ ! -f bedrock_server ] || [ -L bedrock_server ] || [ ! -x bedrock_server ] ||
+        [ ! -f server.properties ] || [ -L server.properties ] ||
+        [ ! -d "${worlds}" ] || [ -L "${worlds}" ]; then
+        echo "[ERROR] Restore requires a regular executable, configuration and worlds directory." >&2
+        exit 1
+    fi
+    if ! awk -v primary="${SERVER_PORT}" -v ipv6="${SERVER_PORTV6}" '
+        { sub(/\r$/, "") }
+        index($0, "server-port=") == 1 { primary_count++; actual_primary = substr($0, 13) }
+        index($0, "server-portv6=") == 1 { ipv6_count++; actual_ipv6 = substr($0, 15) }
+        END { exit(primary_count != 1 || ipv6_count != 1 || actual_primary != primary || actual_ipv6 != ipv6) }
+    ' server.properties; then
+        echo "[ERROR] Restored Bedrock ports differ from the approved listener configuration." >&2
+        exit 1
+    fi
+    export LD_LIBRARY_PATH="${installation}"
+    exec ./bedrock_server
+fi
 
 # Create data directories
 mkdir -p "${DATA_DIR}/worlds"
 mkdir -p "${DATA_DIR}/resource_packs"
 mkdir -p "${DATA_DIR}/behavior_packs"
 
-cd ${SERVER_DIR}
+mkdir -p "${SERVER_DIR}"
+cd "${SERVER_DIR}"
 
-# Function to download Bedrock server
-download_bedrock() {
-    echo "[INFO] Checking for Bedrock Dedicated Server updates..."
-    
-    # Get the download page to find the latest version
-    if [ "${VERSION}" = "LATEST" ]; then
-        echo "[INFO] Fetching latest version..."
-        # Try to get version from the official download page
-        DOWNLOAD_URL=$(curl -s -A "Mozilla/5.0" "https://www.minecraft.net/en-us/download/server/bedrock" | \
-            grep -o 'https://minecraft.azureedge.net/bin-linux/bedrock-server-[0-9.]*\.zip' | head -1)
-        
-        if [ -z "${DOWNLOAD_URL}" ]; then
-            # Fallback: use a known working version format
-            echo "[WARN] Could not detect latest version, using fallback method..."
-            # Try alternative API endpoint
-            DOWNLOAD_URL="https://minecraft.azureedge.net/bin-linux/bedrock-server-1.21.44.01.zip"
-        fi
-    else
-        DOWNLOAD_URL="https://minecraft.azureedge.net/bin-linux/bedrock-server-${VERSION}.zip"
+/usr/local/bin/arcadenode-download-bedrock "${VERSION:-LATEST}" "${SERVER_DIR}"
+
+# Preserve any directories supplied by the archive or already present in the game volume.
+for directory in worlds resource_packs behavior_packs; do
+    if [ ! -e "${SERVER_DIR}/${directory}" ] && [ ! -L "${SERVER_DIR}/${directory}" ]; then
+        ln -s "../data/${directory}" "${SERVER_DIR}/${directory}"
     fi
-    
-    echo "[INFO] Download URL: ${DOWNLOAD_URL}"
-    
-    # Check if we need to download
-    CURRENT_VERSION=""
-    if [ -f "${SERVER_DIR}/.version" ]; then
-        CURRENT_VERSION=$(cat "${SERVER_DIR}/.version")
-    fi
-    
-    # Extract version from URL
-    NEW_VERSION=$(echo "${DOWNLOAD_URL}" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+' || echo "unknown")
-    
-    if [ "${CURRENT_VERSION}" != "${NEW_VERSION}" ] || [ ! -f "${SERVER_DIR}/bedrock_server" ]; then
-        echo "[INFO] Downloading Bedrock Server version ${NEW_VERSION}..."
-        
-        # Download to temp file
-        curl -L -A "Mozilla/5.0" -o /tmp/bedrock-server.zip "${DOWNLOAD_URL}"
-        
-        # Backup existing config if it exists
-        if [ -f "${SERVER_DIR}/server.properties" ]; then
-            cp "${SERVER_DIR}/server.properties" /tmp/server.properties.bak
-        fi
-        if [ -f "${SERVER_DIR}/allowlist.json" ]; then
-            cp "${SERVER_DIR}/allowlist.json" /tmp/allowlist.json.bak
-        fi
-        if [ -f "${SERVER_DIR}/permissions.json" ]; then
-            cp "${SERVER_DIR}/permissions.json" /tmp/permissions.json.bak
-        fi
-        
-        # Extract
-        unzip -o /tmp/bedrock-server.zip -d ${SERVER_DIR}
-        rm /tmp/bedrock-server.zip
-        
-        # Restore configs if they existed
-        if [ -f /tmp/server.properties.bak ]; then
-            mv /tmp/server.properties.bak "${SERVER_DIR}/server.properties"
-        fi
-        if [ -f /tmp/allowlist.json.bak ]; then
-            mv /tmp/allowlist.json.bak "${SERVER_DIR}/allowlist.json"
-        fi
-        if [ -f /tmp/permissions.json.bak ]; then
-            mv /tmp/permissions.json.bak "${SERVER_DIR}/permissions.json"
-        fi
-        
-        # Save version
-        echo "${NEW_VERSION}" > "${SERVER_DIR}/.version"
-        
-        # Make executable
-        chmod +x "${SERVER_DIR}/bedrock_server"
-        
-        echo "[INFO] Bedrock Server ${NEW_VERSION} installed successfully"
-    else
-        echo "[INFO] Bedrock Server ${CURRENT_VERSION} is up to date"
-    fi
-}
-
-# Download/update server
-download_bedrock
-
-# Link world directories for persistence
-rm -rf "${SERVER_DIR}/worlds" 2>/dev/null || true
-ln -sfn "${DATA_DIR}/worlds" "${SERVER_DIR}/worlds"
-
-# Link resource and behavior packs
-rm -rf "${SERVER_DIR}/resource_packs" 2>/dev/null || true
-rm -rf "${SERVER_DIR}/behavior_packs" 2>/dev/null || true
-ln -sfn "${DATA_DIR}/resource_packs" "${SERVER_DIR}/resource_packs"
-ln -sfn "${DATA_DIR}/behavior_packs" "${SERVER_DIR}/behavior_packs"
+done
 
 # Generate server.properties
-echo "[INFO] Generating server.properties..."
-cat > "${SERVER_DIR}/server.properties" << EOF
+if [[ ! -e server.properties && ! -L server.properties ]]; then
+    echo "[INFO] Generating server.properties..."
+    cat > server.properties << EOF
 # Minecraft Bedrock Server Properties
 # Generated by ArcadeNode
 
@@ -148,54 +109,18 @@ disable-persona=${DISABLE_PERSONA}
 disable-custom-skins=${DISABLE_CUSTOM_SKINS}
 server-build-radius-ratio=${SERVER_BUILD_RADIUS_RATIO}
 EOF
-
-# Set up allowlist if specified
-if [ -n "${ALLOW_LIST_USERS}" ]; then
-    echo "[INFO] Setting up allowlist..."
-    echo "[" > "${SERVER_DIR}/allowlist.json"
-    IFS=',' read -ra USERS <<< "${ALLOW_LIST_USERS}"
-    FIRST=true
-    for USER in "${USERS[@]}"; do
-        USER=$(echo "${USER}" | xargs)  # Trim whitespace
-        if [ -n "${USER}" ]; then
-            if [ "${FIRST}" = true ]; then
-                FIRST=false
-            else
-                echo "," >> "${SERVER_DIR}/allowlist.json"
-            fi
-            cat >> "${SERVER_DIR}/allowlist.json" << USERENTRY
-    {
-        "name": "${USER}"
-    }
-USERENTRY
-        fi
-    done
-    echo "]" >> "${SERVER_DIR}/allowlist.json"
 fi
 
-# Set up operators/permissions if specified
-if [ -n "${OPS}" ]; then
-    echo "[INFO] Setting up operators..."
-    echo "[" > "${SERVER_DIR}/permissions.json"
-    IFS=',' read -ra OP_ARRAY <<< "${OPS}"
-    FIRST=true
-    for OP in "${OP_ARRAY[@]}"; do
-        OP=$(echo "${OP}" | xargs)  # Trim whitespace
-        if [ -n "${OP}" ]; then
-            if [ "${FIRST}" = true ]; then
-                FIRST=false
-            else
-                echo "," >> "${SERVER_DIR}/permissions.json"
-            fi
-            cat >> "${SERVER_DIR}/permissions.json" << OPENTRY
-    {
-        "permission": "operator",
-        "xuid": "${OP}"
-    }
-OPENTRY
-        fi
-    done
-    echo "]" >> "${SERVER_DIR}/permissions.json"
+if [[ -n "${ALLOW_LIST_USERS}" && ! -e allowlist.json && ! -L allowlist.json ]]; then
+    jq -n --arg users "$ALLOW_LIST_USERS" '
+        [$users | split(",")[] | gsub("^\\s+|\\s+$"; "") | select(length > 0) | {name: .}]
+    ' > allowlist.json
+fi
+
+if [[ -n "${OPS}" && ! -e permissions.json && ! -L permissions.json ]]; then
+    jq -n --arg operators "$OPS" '
+        [$operators | split(",")[] | gsub("^\\s+|\\s+$"; "") | select(length > 0) | {permission: "operator", xuid: .}]
+    ' > permissions.json
 fi
 
 echo ""

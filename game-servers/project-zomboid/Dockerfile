@@ -5,13 +5,15 @@ FROM steamcmd/steamcmd:ubuntu-24
 
 LABEL maintainer="ArcadeNode"
 LABEL game="Project Zomboid"
-LABEL version="1.0"
+LABEL version="2.0"
+LABEL arcadenode.managed="2"
+LABEL arcadenode.restore="1"
 
 # Environment variables
 ENV STEAM_APP_ID=380870
 ENV SERVER_NAME="ArcadeNode_PZ_Server"
 ENV SERVER_PASSWORD=""
-ENV ADMIN_PASSWORD="changeme"
+ENV ADMIN_PASSWORD=""
 ENV SERVER_PORT=16261
 ENV DIRECT_PORT=16262
 ENV RCON_PORT=27015
@@ -24,7 +26,9 @@ ENV MOD_IDS=""
 ENV WORKSHOP_IDS=""
 ENV BETA_BRANCH=""
 ENV BETA_PASSWORD=""
+ENV AUTO_UPDATE=0
 ENV HOME=/home/pzserver
+ENV USER=pzserver
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
@@ -38,22 +42,24 @@ RUN apt-get update && apt-get install -y \
 
 # Create directories and set permissions
 # .cache is for server-generated configs, scripts, and logs
-RUN mkdir -p /home/pzserver/server \
+RUN groupadd -g 10001 pzserver \
+    && useradd -m -u 10001 -g 10001 -s /bin/bash pzserver \
+    && mkdir -p /home/pzserver/server \
     && mkdir -p /home/pzserver/data \
     && mkdir -p /home/pzserver/Zomboid \
     && mkdir -p /home/pzserver/.steam \
     && mkdir -p /home/pzserver/.cache/configs \
-    && mkdir -p /home/pzserver/.cache/scripts \
     && mkdir -p /home/pzserver/.cache/logs \
     && mkdir -p /home/pzserver/.cache/templates \
-    && chmod -R 777 /home/pzserver
+    && chown -R 10001:10001 /home/pzserver \
+    && chmod -R u=rwX,g=rX,o= /home/pzserver
 
 WORKDIR /home/pzserver
 
 # Copy startup script
-COPY entrypoint.sh /home/pzserver/entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/arcadenode-entrypoint
 COPY server.ini.template /home/pzserver/server.ini.template
-RUN chmod +x /home/pzserver/entrypoint.sh
+RUN chmod 0555 /usr/local/bin/arcadenode-entrypoint
 
 # Expose ports
 # Game port (UDP)
@@ -64,11 +70,11 @@ EXPOSE 16262/udp
 EXPOSE 27015/tcp
 
 # Volumes for persistence
-VOLUME ["/home/pzserver/data"]
 
 # Health check - use default port since ENV vars aren't expanded at runtime
 # Increased start-period because PZ server takes a LONG time to initialize (map loading, etc.)
 HEALTHCHECK --interval=60s --timeout=30s --start-period=300s --retries=5 \
     CMD netcat -zu localhost 16261 || exit 1
 
-ENTRYPOINT ["/home/pzserver/entrypoint.sh"]
+USER 10001:10001
+ENTRYPOINT ["/usr/local/bin/arcadenode-entrypoint"]

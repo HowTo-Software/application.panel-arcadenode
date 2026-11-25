@@ -9,3 +9,9 @@
 **/*.suo
 # Prevent recursive nesting from previous deploys
 ServerPanel.API/ServerPanel.API/
+
+**/.env*
+**/*.pem
+**/*.key
+**/*.crt
+**/appsettings.*.json

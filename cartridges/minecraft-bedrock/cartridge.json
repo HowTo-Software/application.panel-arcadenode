@@ -1,0 +1,87 @@
+{
+    "meta": { "version": "1.0", "format": "ARCADENODE_V1" },
+    "id": "minecraft-bedrock",
+    "name": "Minecraft: Bedrock Edition",
+    "author": "ArcadeNode Team",
+    "description": "Official Bedrock Dedicated Server with cross-platform play and support for existing worlds and packs.",
+    "category": "sandbox",
+    "tags": ["minecraft", "sandbox", "cross-platform"],
+    "website": "https://www.minecraft.net/en-us/download/server/bedrock",
+    "docker": {
+        "image": "arcadenode/minecraft-bedrock:secure",
+        "base_image": "ubuntu:24.04"
+    },
+    "ports": {
+        "game": { "default": 19132, "protocol": "udp", "required": true, "description": "Bedrock IPv4 listener" },
+        "ipv6": { "default": 19133, "protocol": "udp", "required": false, "use_default_on_restore": true, "description": "Bedrock IPv6 listener" }
+    },
+    "resources": {
+        "memory": { "minimum": 1024, "recommended": 2048, "unit": "MB" },
+        "cpu": { "minimum": 1, "recommended": 2, "unit": "cores" },
+        "disk": { "minimum": 2048, "recommended": 8192, "unit": "MB" }
+    },
+    "startup": {
+        "command": "/usr/local/bin/arcadenode-entrypoint",
+        "working_directory": "/home/bedrock",
+        "ready_pattern": "Server started"
+    },
+    "process": { "stop_command": "stop", "stop_timeout": 90, "restart_on_crash": false },
+    "system_variables": { "SERVER_PORTV6": "{{IPV6_PORT}}" },
+    "variables": [
+        {
+            "id": "version", "name": "Bedrock Version", "env_variable": "VERSION", "type": "string",
+            "description": "Official Linux release or latest.",
+            "default": "latest", "required": true, "fresh_install_only": true,
+            "validation": { "pattern": "^(?i:latest|[0-9]{1,4}(\\.[0-9]{1,4}){3})$" }
+        },
+        {
+            "id": "server_name", "name": "Server Name", "env_variable": "SERVER_NAME", "type": "string",
+            "default": "ArcadeNode Bedrock Server", "required": true, "fresh_install_only": true,
+            "validation": { "max_length": 50 }
+        },
+        {
+            "id": "gamemode", "name": "Game Mode", "env_variable": "GAMEMODE", "type": "string",
+            "default": "survival", "required": true, "fresh_install_only": true,
+            "ui": { "component": "select", "options": [
+                { "value": "survival", "label": "Survival" },
+                { "value": "creative", "label": "Creative" },
+                { "value": "adventure", "label": "Adventure" }
+            ] }
+        },
+        {
+            "id": "difficulty", "name": "Difficulty", "env_variable": "DIFFICULTY", "type": "string",
+            "default": "normal", "required": true, "fresh_install_only": true,
+            "ui": { "component": "select", "options": [
+                { "value": "peaceful", "label": "Peaceful" },
+                { "value": "easy", "label": "Easy" },
+                { "value": "normal", "label": "Normal" },
+                { "value": "hard", "label": "Hard" }
+            ] }
+        },
+        {
+            "id": "allow_cheats", "name": "Allow Cheats", "env_variable": "ALLOW_CHEATS",
+            "type": "boolean", "default": false, "fresh_install_only": true,
+            "ui": { "component": "switch" }
+        },
+        {
+            "id": "max_players", "name": "Maximum Players", "env_variable": "MAX_PLAYERS",
+            "type": "integer", "default": 10, "fresh_install_only": true,
+            "validation": { "min": 1, "max": 1000 }, "ui": { "component": "number" }
+        },
+        {
+            "id": "level_name", "name": "World Name", "env_variable": "LEVEL_NAME", "type": "string",
+            "default": "Bedrock level", "required": true, "fresh_install_only": true,
+            "validation": { "max_length": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9 _-]*$" }
+        },
+        {
+            "id": "level_seed", "name": "World Seed", "env_variable": "LEVEL_SEED", "type": "string",
+            "default": "", "fresh_install_only": true, "validation": { "max_length": 128 }
+        },
+        {
+            "id": "white_list", "name": "Restrict Joins to the Allowlist", "env_variable": "WHITE_LIST",
+            "type": "boolean", "default": false, "fresh_install_only": true,
+            "ui": { "component": "switch" }
+        }
+    ],
+    "console": { "enabled": true, "type": "stdin" }
+}
