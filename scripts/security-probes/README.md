@@ -40,6 +40,8 @@ O ensaio Minecraft Java usa a versão estável do Vanilla, seleciona o Java a pa
 
 O ensaio do Project Zomboid baixa o servidor oficial pelo SteamCMD no runner. Usa `legacy41` por padrão, inicia um mundo no layout do Pterodactyl e adiciona um jogador depois da primeira cópia. O destino precisa iniciar com a mesma árvore de arquivos, passar na verificação do SQLite e preservar as credenciais do banco do jogo. As duas instâncias rodam com `-nosteam` e sem rede. O runner usa XFS com reflink para compartilhar os blocos dos arquivos idênticos, mantém os diretórios independentes e limpa o volume ao sair. Em um runner Linux descartável, `ZOMBOID_SMOKE_BRANCH` permite testar outra branch do Steam, inclusive `public`.
 
+O job do Zomboid usa Ubuntu 24.04 para manter o perfil padrão de segurança do Docker. O Docker 29.4.2 bloqueia a chamada de rede usada pelo SteamCMD de 32 bits. Em hosts com Docker 29.4, use 29.4.3 ou posterior com o kernel atualizado. O ensaio também requer `xfsprogs` e `sqlite3`. [Notas do Docker Engine 29](https://docs.docker.com/engine/release-notes/29/#2943)
+
 Em um host Linux de homologação, rode os mesmos passos com Docker local, SDK .NET 10, Python 3, `jq`, `rsync` e `sudo` sem interação para as operações nos volumes de teste.
 
 ```sh
