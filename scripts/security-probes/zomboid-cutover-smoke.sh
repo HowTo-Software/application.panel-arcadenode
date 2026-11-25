@@ -19,7 +19,7 @@ cleanup() {
     trap - EXIT
     for container in "$source_container" "$destination_container" "$installer"; do
         if [[ -z "$container" ]]; then continue; fi
-        if [[ "$status" != 0 ]]; then docker logs --tail 35 "$container" >&2 || true; fi
+        if [[ "$status" != 0 ]]; then docker logs --tail 125 "$container" >&2 || true; fi
         docker rm -f "$container" >/dev/null 2>&1 || true
     done
     if [[ "$status" != 0 && -n "$installer" ]]; then
@@ -98,7 +98,7 @@ sudo -n setpriv --reuid=10001 --regid=10001 --clear-groups bash -eu -s -- "$volu
     chmod --reference="$config" "$temp"
     mv -fT -- "$temp" "$config"
     mkdir -p "$source/.cache/Server"
-    mkdir -m 0700 "$source/.cache/arcadenode-sqlite"
+    mkdir -m 0700 "$source/.cache/arcadenode-java-tmp"
     printf "%s\n" DefaultPort=16261 UDPPort=16262 Public=false Open=false RCONPassword= \
         > "$source/.cache/Server/$2.ini"
 CONFIGURE
@@ -111,7 +111,7 @@ source_container="$(docker run -dit --name "$server_id" --network none "${isolat
     --workdir /home/container --env HOME=/home/container --entrypoint /bin/bash "$image" -ec '
         export PATH="$PWD/jre64/bin:$PATH"
         export LD_LIBRARY_PATH="$PWD/linux64:$PWD/natives:$PWD:$PWD/jre64/lib/amd64"
-        export JAVA_TOOL_OPTIONS=-Dorg.sqlite.tmpdir=/home/container/.cache/arcadenode-sqlite
+        export JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/home/container/.cache/arcadenode-java-tmp
         for library in jre64/lib/libjsig.so jre64/lib/amd64/libjsig.so; do
             if [[ -f "$library" ]]; then export LD_PRELOAD="$PWD/$library"; break; fi
         done

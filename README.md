@@ -1,6 +1,6 @@
 # ArcadeNode
 
-Prototype in active development. Security changes are implemented locally; real SQL/Docker/game acceptance tests are still required. See [the correction report](docs/SECURITY_HARDENING_PT-BR.md). Some game/template features below remain planned.
+ArcadeNode manages Linux game servers through an ASP.NET Core API, a React panel, and operator-enrolled Docker nodes. Rehearse each migration against restored data and check the destination before switching live traffic. See the [security corrections](docs/SECURITY_HARDENING_PT-BR.md) and the [Linux regression and game tests](scripts/security-probes/README.md).
 
 Troubleshooting: [bilingual warning codes and failure map](docs/DIAGNOSTICS_PT-BR.md), including API logs, browser console and request correlation.
 

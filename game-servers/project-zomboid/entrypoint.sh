@@ -26,16 +26,16 @@ case "${NO_STEAM:-false}" in
     *) echo '[ERROR] NO_STEAM must be 0, 1, false or true.' >&2; exit 1 ;;
 esac
 
-prepare_sqlite_native_directory() {
-    local native_directory="${CACHE_DIR}/arcadenode-sqlite"
+prepare_java_temporary_directory() {
+    local native_directory="${CACHE_DIR}/arcadenode-java-tmp"
     if [[ -L "$CACHE_DIR" || -L "$native_directory" ]]; then
-        echo '[ERROR] SQLite native libraries require a directory in the game volume.' >&2
+        echo '[ERROR] Java runtime files require a directory in the game volume.' >&2
         return 1
     fi
     mkdir -p -- "$native_directory"
     chmod 0700 -- "$native_directory"
-    # The SQLite driver extracts its native library before opening player data. /tmp stays noexec.
-    export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Dorg.sqlite.tmpdir=\"${native_directory}\""
+    # SQLite and LWJGL extract native libraries into the Java temporary directory. /tmp stays noexec.
+    export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Djava.io.tmpdir=\"${native_directory}\""
 }
 
 configure_managed_heap() (
@@ -153,7 +153,7 @@ if [ "${ARCADENODE_RESTORED_VOLUME:-false}" = "true" ]; then
     export USER="pzserver"
     cd "${SERVER_DIR}"
     configure_managed_heap
-    prepare_sqlite_native_directory
+    prepare_java_temporary_directory
     if [[ "$launcher" == ./ProjectZomboid64 ]]; then
         export PATH="${SERVER_DIR}/jre64/bin:$PATH"
         export LD_LIBRARY_PATH="${SERVER_DIR}/linux64:${SERVER_DIR}/natives:${SERVER_DIR}:${SERVER_DIR}/jre64/lib/amd64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -508,7 +508,7 @@ echo "$(date -Iseconds) - Server starting with config: ${CONFIG_FILE}" >> "${CAC
 
 # The native launcher reads heap options from ProjectZomboid64.json.
 configure_managed_heap
-prepare_sqlite_native_directory
+prepare_java_temporary_directory
 if [[ -z "${ARCADENODE_JAVA_HEAP_MIB:-}" ]]; then
     export JAVA_OPTS="-Xms${MAX_RAM}m -Xmx${MAX_RAM}m"
 fi
