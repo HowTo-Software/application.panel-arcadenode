@@ -22,6 +22,9 @@ cleanup() {
         if [[ "$status" != 0 ]]; then docker logs --tail 35 "$container" >&2 || true; fi
         docker rm -f "$container" >/dev/null 2>&1 || true
     done
+    if [[ "$status" != 0 && -n "$installer" ]]; then
+        sudo -n tail -n 25 "$volumes/steam/.local/share/Steam/logs/bootstrap_log.txt" >&2 || true
+    fi
     if mountpoint -q "$volumes"; then sudo -n umount "$volumes" || exit 1; fi
     sudo -n rm -rf -- "$scratch"
     exit "$status"
@@ -52,14 +55,22 @@ isolated=(--user 10001:10001 --read-only --cap-drop ALL --security-opt no-new-pr
 
 steam_branch=()
 if [[ "$branch" != public ]]; then steam_branch=(-beta "$branch"); fi
-installer="zomboid-install-$server_id"
-timeout --kill-after=15 1800 docker run --rm --name "$installer" "${isolated[@]}" \
+installer="$(docker create --name "zomboid-install-$server_id" "${isolated[@]}" \
     --env HOME=/home/steam-install --workdir /home/steam-install \
     --mount "type=bind,src=$volumes/steam,dst=/home/steam-install" \
     --mount "type=bind,src=$volumes/source,dst=/home/container" \
     --entrypoint /usr/bin/steamcmd "$image" \
     +@ShutdownOnFailedCommand 1 +@sSteamCmdForcePlatformType linux +force_install_dir /home/container \
-    +login anonymous +app_info_update 1 +app_update 380870 "${steam_branch[@]}" validate +quit
+    +login anonymous +app_info_update 1 +app_update 380870 "${steam_branch[@]}" validate +quit)"
+# The base image has already updated SteamCMD as root. Seed a separate writable home for its non-root runtime.
+steam_client="$volumes/steam/.local/share/Steam/steamcmd"
+sudo -n mkdir -p "$steam_client"
+sudo -n docker cp "$installer:/root/.local/share/Steam/steamcmd/." "$steam_client/"
+sudo -n test -x "$steam_client/linux32/steamcmd"
+sudo -n chown -hR 10001:10001 "$volumes/steam"
+timeout --kill-after=15 1800 docker start -a "$installer"
+test "$(docker inspect --format '{{.State.ExitCode}}' "$installer")" = 0
+docker rm "$installer" >/dev/null
 installer=''
 sudo -n test -x "$volumes/source/ProjectZomboid64"
 sudo -n test -x "$volumes/source/jre64/bin/java"

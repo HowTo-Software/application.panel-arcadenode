@@ -217,7 +217,7 @@ public class PanelDbContext : DbContext
             Variables = @"[
                 {""Name"":""Server JAR"",""EnvVariable"":""SERVER_JARFILE"",""DefaultValue"":""server.jar"",""UserViewable"":true,""UserEditable"":true},
                 {""Name"":""Minecraft Version"",""EnvVariable"":""MINECRAFT_VERSION"",""DefaultValue"":""latest"",""UserViewable"":true,""UserEditable"":true}
-            ]"
+            ]".ReplaceLineEndings("\r\n") // Match the existing seed in the SQL Server migration snapshot on all hosts.
         });
     }
 }
